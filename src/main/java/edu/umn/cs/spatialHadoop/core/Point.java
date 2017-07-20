@@ -1,39 +1,39 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.core;
 
-import java.awt.Graphics;
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableComparable;
+
+import java.awt.*;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-
-import org.apache.hadoop.io.Text;
-
-import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
 
 /**
  * A class that holds coordinates of a point.
  * @author aseldawy
  *
  */
-public class Point implements Shape, Comparable<Point> {
+public class Point implements Shape, WritableComparable<Point> {
 	public double x;
 	public double y;
 
 	public Point() {
 		this(0, 0);
 	}
-	
+
 	public Point(double x, double y) {
 	  set(x, y);
 	}
-	
+
 
 	/**
 	 * A copy constructor from any shape of type Point (or subclass of Point)
@@ -71,9 +71,9 @@ public class Point implements Shape, Comparable<Point> {
 		  return 0;
 		return difference > 0 ? 1 : -1;
 	}
-	
+
 	public boolean equals(Object obj) {
-		if (obj == null) 
+		if (obj == null)
 			return false;
 		Point r2 = (Point) obj;
 		return this.x == r2.x && this.y == r2.y;
@@ -95,7 +95,7 @@ public class Point implements Shape, Comparable<Point> {
 		double dy = s.y - this.y;
 		return Math.sqrt(dx*dx+dy*dy);
 	}
-	
+
 	@Override
 	public Point clone() {
 	  return new Point(this.x, this.y);
@@ -131,19 +131,19 @@ public class Point implements Shape, Comparable<Point> {
   public boolean isIntersected(Shape s) {
     return getMBR().isIntersected(s);
   }
-  
+
   @Override
   public String toString() {
     return "Point: ("+x+","+y+")";
   }
-  
+
   @Override
   public Text toText(Text text) {
     TextSerializerHelper.serializeDouble(x, text, ',');
     TextSerializerHelper.serializeDouble(y, text, '\0');
     return text;
   }
-  
+
   @Override
   public void fromText(Text text) {
     x = TextSerializerHelper.consumeDouble(text, ',');
@@ -168,9 +168,9 @@ public class Point implements Shape, Comparable<Point> {
   		int imageHeight, double scale) {
     int imageX = (int) Math.round((this.x - fileMBR.x1) * imageWidth / fileMBR.getWidth());
     int imageY = (int) Math.round((this.y - fileMBR.y1) * imageHeight / fileMBR.getHeight());
-    g.fillRect(imageX, imageY, 1, 1);  	
+    g.fillRect(imageX, imageY, 1, 1);
   }
-  
+
   @Override
   public void draw(Graphics g, double xscale, double yscale) {
     int imgx = (int) Math.round(x * xscale);
