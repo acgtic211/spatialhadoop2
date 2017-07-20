@@ -1,7 +1,7 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
@@ -47,13 +47,13 @@ import edu.umn.cs.spatialHadoop.operations.Repartition.RepartitionReduce;
  *
  */
 public class RandomSpatialGenerator {
-  
+
   private static void generateMapReduce(Path outFile, OperationsParams params)
       throws IOException{
     JobConf job = new JobConf(params, RandomSpatialGenerator.class);
     job.setJobName("Generator");
     Shape shape = params.getShape("shape");
-    
+
     FileSystem outFs = outFile.getFileSystem(job);
 
     ClusterStatus clusterStatus = new JobClient(job).getClusterStatus();
@@ -63,10 +63,10 @@ public class RandomSpatialGenerator {
     job.setMapOutputKeyClass(IntWritable.class);
     job.setMapOutputValueClass(shape.getClass());
     job.setNumMapTasks(10 * Math.max(1, clusterStatus.getMaxMapTasks()));
-    
+
     String sindex = params.get("sindex");
     Rectangle mbr = params.getShape("mbr").getMBR();
-    
+
     CellInfo[] cells;
     if (sindex == null) {
       cells = new CellInfo[] {new CellInfo(1, mbr)};
@@ -81,9 +81,9 @@ public class RandomSpatialGenerator {
     } else {
       throw new RuntimeException("Unsupported spatial index: "+sindex);
     }
-    
+
     SpatialSite.setCells(job, cells);
-    
+
     // Do not set a reduce function. Use the default identity reduce function
     if (cells.length == 1) {
       // All objects are in one partition. No need for a reduce phase
@@ -95,7 +95,7 @@ public class RandomSpatialGenerator {
       job.setNumReduceTasks(Math.max(1, Math.min(cells.length,
           (clusterStatus.getMaxReduceTasks() * 9 + 5) / 10)));
     }
-    
+
     // Set output path
     FileOutputFormat.setOutputPath(job, outFile);
     if (sindex == null || sindex.equals("grid")) {
@@ -103,9 +103,9 @@ public class RandomSpatialGenerator {
     } else {
       throw new RuntimeException("Unsupported spatial index: "+sindex);
     }
-    
+
     JobClient.runJob(job);
-    
+
     // TODO move the following part to OutputCommitter
     // Concatenate all master files into one file
     FileStatus[] resultFiles = outFs.listStatus(outFile, new PathFilter() {
@@ -132,17 +132,17 @@ public class RandomSpatialGenerator {
     }
     destOut.close();
   }
-  
+
   /**
    * Generates random rectangles and write the result to a file.
    * @param outFS - The file system that contains the output file
    * @param outputFile - The file name to write to. If either outFS or
    *   outputFile is null, data is generated to the standard output
    * @param mbr - The whole MBR to generate in
-   * @param shape 
+   * @param shape
    * @param totalSize - The total size of the generated file
-   * @param blocksize 
-   * @throws IOException 
+   * @param blocksize
+   * @throws IOException
    */
   private static void generateFileLocal(Path outFile, OperationsParams params) throws IOException {
     JobConf job = new JobConf(params, RandomSpatialGenerator.class);
@@ -151,7 +151,7 @@ public class RandomSpatialGenerator {
     String sindex = params.get("sindex");
     Rectangle mbr = params.getShape("mbr").getMBR();
     long totalSize = params.getSize("size");
-    
+
     // Calculate the dimensions of each partition based on gindex type
     CellInfo[] cells;
     if (sindex == null) {
@@ -166,7 +166,7 @@ public class RandomSpatialGenerator {
     } else {
       throw new RuntimeException("Unsupported spatial index: "+sindex);
     }
-    
+
     outFS.mkdirs(outFile);
 
     ShapeRecordWriter<Shape> writer;
@@ -179,23 +179,24 @@ public class RandomSpatialGenerator {
     int rectSize = params.getInt("rectsize", 100);
     long seed = params.getLong("seed", System.currentTimeMillis());
     float circleThickness = params.getFloat("thickness", 1);
+    int clusterNumber = params.getInt("clusternumber", 5);
     DistributionType type = SpatialSite.getDistributionType(params, "type",
         DistributionType.UNIFORM);
     Shape shape = params.getShape("shape");
     long t1 = System.currentTimeMillis();
-    
+
     RandomShapeGenerator<Shape> generator = new RandomShapeGenerator<Shape>(
-        totalSize, mbr, type, rectSize, seed, circleThickness);
-    
+        totalSize, mbr, type, rectSize, seed, circleThickness, clusterNumber);
+
     Rectangle key = generator.createKey();
-    
+
     while (generator.next(key, shape)) {
       // Serialize it to text
       writer.write(NullWritable.get(), shape);
     }
     writer.close(null);
     long t2 = System.currentTimeMillis();
-    
+
     System.out.println("Generation time: "+(t2-t1)+" millis");
   }
 
@@ -211,10 +212,10 @@ public class RandomSpatialGenerator {
     System.out.println("-overwrite - Overwrite output file without notice");
     GenericOptionsParser.printGenericCommandUsage(System.out);
   }
-  
+
   /**
    * @param args Command line arguments
-   * @throws IOException If an exception happens during the underlying MapReduce job 
+   * @throws IOException If an exception happens during the underlying MapReduce job
    */
   public static void main(String[] args) throws IOException {
     OperationsParams params = new OperationsParams(new GenericOptionsParser(args), false);
@@ -223,20 +224,20 @@ public class RandomSpatialGenerator {
       printUsage();
       System.exit(1);
     }
-    
+
     if (params.get("shape") == null) {
       System.err.println("Shape should be specified");
       printUsage();
       System.exit(1);
     }
-    
+
     if (!params.checkOutput()) {
       printUsage();
       System.exit(1);
     }
 
     Path outputFile = params.getPath();
-    
+
     long totalSize = params.getSize("size");
 
     if (totalSize < 100*1024*1024)
@@ -246,4 +247,3 @@ public class RandomSpatialGenerator {
   }
 
 }
-  
