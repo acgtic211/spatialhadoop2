@@ -1,22 +1,21 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.core;
 
-import java.awt.Graphics;
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.IOException;
-
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 
-import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
+import java.awt.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
 /**
  * A class that holds coordinates of a rectangle. For predicate test functions
@@ -36,7 +35,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
   }
 
   /**
-   * Constructs a new <code>Rectangle</code>, initialized to match 
+   * Constructs a new <code>Rectangle</code>, initialized to match
    * the values of the specified <code>Rectangle</code>.
    * @param r  the <code>Rectangle</code> from which to copy initial values
    *           to a newly constructed <code>Rectangle</code>
@@ -49,7 +48,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
   public Rectangle(double x1, double y1, double x2, double y2) {
     this.set(x1, y1, x2, y2);
   }
-  
+
   public void set(Shape s) {
     if (s == null) {
       System.out.println("tozz");
@@ -58,7 +57,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     Rectangle mbr = s.getMBR();
     set(mbr.x1, mbr.y1, mbr.x2, mbr.y2);
   }
-  
+
   public void set(double x1, double y1, double x2, double y2) {
     this.x1 = x1;
     this.y1 = y1;
@@ -79,7 +78,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     this.x2 = in.readDouble();
     this.y2 = in.readDouble();
   }
-  
+
   /**
    * Comparison is done by lexicographic ordering of attributes
    * &lt; x1, y1, x2, y2&gt;
@@ -165,22 +164,22 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
       dy = 0;
     else
       dy = py - this.y2;
-    
+
     if (dx > 0 && dy > 0)
       return Math.sqrt(dx * dx + dy * dy);
     return Math.max(dx, dy);
   }
-  
+
   @Override
   public Rectangle clone() {
     return new Rectangle(this);
   }
-  
+
   @Override
   public Rectangle getMBR() {
     return new Rectangle(this);
   }
-  
+
   public boolean isIntersected(Shape s) {
     if (s instanceof Point) {
       Point pt = (Point)s;
@@ -246,15 +245,15 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     if (r.y2 > this.y2)
       this.y2 = r.y2;
   }
-  
+
   public boolean contains(double rx1, double ry1, double rx2, double ry2) {
     return rx1 >= x1 && rx2 <= x2 && ry1 >= y1 && ry2 <= y2;
   }
-  
+
   public Point getCenterPoint() {
     return new Point((x1 + x2) / 2, (y1 + y2)/2);
   }
-  
+
   /**
    * Compute the intersection of a line segment with the rectangle border.
    * It is assumed that p1 lies inside the rectangle while p2 is outside it.
@@ -279,7 +278,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     TextSerializerHelper.serializeDouble(y2, text, '\0');
     return text;
   }
-  
+
   @Override
   public void fromText(Text text) {
     x1 = TextSerializerHelper.consumeDouble(text, ',');
@@ -296,7 +295,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
   public boolean isValid() {
     return !Double.isNaN(x1);
   }
-  
+
   public void invalidate() {
     this.x1 = Double.NaN;
   }
@@ -332,10 +331,10 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
       return -1;
     if (this.y2 > r2.y2)
       return 1;
-    
+
     return 0;
   }
-  
+
   @Override
   public void draw(Graphics g, Rectangle fileMBR, int imageWidth,
       int imageHeight, double scale) {
@@ -345,7 +344,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     int s_y2 = (int) Math.round((this.y2 - fileMBR.y1) * imageHeight / fileMBR.getHeight());
     g.fillRect(s_x1, s_y1, s_x2 - s_x1 + 1, s_y2 - s_y1 + 1);
   }
-  
+
   @Override
   public void draw(Graphics g, double xscale, double yscale) {
     int imgx1 = (int) Math.round(this.x1 * xscale);
@@ -354,7 +353,7 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
     int imgy2 = (int) Math.round(this.y2 * yscale);
     g.fillRect(imgx1, imgy1, imgx2 - imgx1 + 1, imgy2 - imgy1 + 1);
   }
-  
+
   public Rectangle buffer(double dw, double dh) {
     return new Rectangle(this.x1 - dw, this.y1 - dh, this.x2 + dw, this.y2 + dh);
   }
@@ -365,9 +364,47 @@ public class Rectangle implements Shape, WritableComparable<Rectangle> {
   public Rectangle translate(double dx, double dy) {
     return new Rectangle(this.x1 + dx, this.y1 + dy, this.x2 + dx, this.y2 + dy);
   }
-  
+
   public String toWKT() {
     return String.format("POLYGON((%g %g, %g %g, %g %g, %g %g, %g %g))",
         x1, y1,   x1, y2,   x2, y2,   x2, y1,   x1, y1);
   }
+
+  public double getMinDistance(Rectangle r2) {
+    // dx is the horizontal gap between the two rectangles. If their x ranges
+    // overlap, dx is zero
+    double dx = 0;
+    if (r2.x1 > this.x2)
+      dx = r2.x1 - this.x2;
+    else if (this.x1 > r2.x2)
+      dx = this.x1 - r2.x2;
+
+    double dy = 0;
+    if (r2.y1 > this.y2)
+      dy = r2.y1 - this.y2;
+    else if (this.y1 > r2.y2)
+      dy = this.y1 - r2.y2;
+
+    // Case 1: Overlapping rectangles
+    if (dx == 0 && dy == 0)
+      return 0;
+
+    // Case 2: Overlapping in one dimension only
+    if (dx == 0 || dy == 0)
+      return dx + dy;
+
+    // Case 3: Not overlapping in any dimension
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  public double getMaxDistance(Rectangle r2) {
+    double xmin = Math.min(this.x1, r2.x1);
+    double xmax = Math.max(this.x2, r2.x2);
+    double ymin = Math.min(this.y1, r2.y1);
+    double ymax = Math.max(this.y2, r2.y2);
+    double dx = xmax - xmin;
+    double dy = ymax - ymin;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
 }
