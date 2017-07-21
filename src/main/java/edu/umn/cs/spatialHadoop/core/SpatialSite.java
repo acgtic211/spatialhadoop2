@@ -1,38 +1,26 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.core;
 
-import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
-import java.net.URLDecoder;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
+import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.indexing.GlobalIndex;
+import edu.umn.cs.spatialHadoop.indexing.Partition;
+import edu.umn.cs.spatialHadoop.indexing.RTree;
+import edu.umn.cs.spatialHadoop.mapred.RandomShapeGenerator.DistributionType;
+import edu.umn.cs.spatialHadoop.mapred.ShapeIterRecordReader;
+import edu.umn.cs.spatialHadoop.mapred.SpatialRecordReader.ShapeIterator;
+import edu.umn.cs.spatialHadoop.util.FileUtil;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.filecache.DistributedCache;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.PathFilter;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.compress.CodecPool;
 import org.apache.hadoop.io.compress.CompressionCodec;
@@ -43,33 +31,34 @@ import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.Job;
 
-import edu.umn.cs.spatialHadoop.OperationsParams;
-import edu.umn.cs.spatialHadoop.indexing.GlobalIndex;
-import edu.umn.cs.spatialHadoop.indexing.Partition;
-import edu.umn.cs.spatialHadoop.indexing.RTree;
-import edu.umn.cs.spatialHadoop.mapred.RandomShapeGenerator.DistributionType;
-import edu.umn.cs.spatialHadoop.mapred.ShapeIterRecordReader;
-import edu.umn.cs.spatialHadoop.mapred.SpatialRecordReader.ShapeIterator;
-import edu.umn.cs.spatialHadoop.util.FileUtil;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLDecoder;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Combines all the configuration needed for SpatialHadoop.
- * 
+ *
  * @author Ahmed Eldawy
  *
  */
 public class SpatialSite {
-  
+
   private static final Log LOG = LogFactory.getLog(SpatialSite.class);
-  
+
   /**
    * A filter that selects visible files and filters out hidden files.
    * Hidden files are the ones with a names starting in '.' or '_'
    */
   public static final PathFilter NonHiddenFileFilter = new PathFilter(){
     public boolean accept(Path p){
-      String name = p.getName(); 
-      return !name.startsWith("_") && !name.startsWith("."); 
+      String name = p.getName();
+      return !name.startsWith("_") && !name.startsWith(".");
     }
   };
 
@@ -78,35 +67,35 @@ public class SpatialSite {
 
   /**Enforce static only calls*/
   private SpatialSite() {}
-  
+
   /**The class used to filter blocks before starting map tasks*/
   public static final String FilterClass = "spatialHadoop.mapreduce.filter";
-  
+
   /**Whether to build the RTree in fast mode or slow (memory saving) mode.*/
   public static final String RTREE_BUILD_MODE =
       "spatialHadoop.storage.RTreeBuildMode";
-  
+
   /**Configuration line name for replication overhead*/
   public static final String INDEXING_OVERHEAD =
       "spatialHadoop.storage.IndexingOverhead";
-  
+
   /**Ratio of the sample to read from files to build a global R-tree*/
   public static final String SAMPLE_RATIO = "spatialHadoop.storage.SampleRatio";
-  
+
   /**Ratio of the sample to read from files to build a global R-tree*/
   public static final String SAMPLE_SIZE = "spatialHadoop.storage.SampleSize";
-  
+
   /**
    * A marker put in the beginning of each block to indicate that this block
    * is stored as an RTree. It might be better to store this in the BlockInfo
    * in a field (e.g. localIndexType).
    */
   public static final long RTreeFileMarker = -0x00012345678910L;
-  
+
   public static final String OUTPUT_CELLS = "edu.umn.cs.spatial.mapReduce.GridOutputFormat.CellsInfo";
   public static final String OVERWRITE = "edu.umn.cs.spatial.mapReduce.GridOutputFormat.Overwrite";
 
-  
+
   private static final CompressionCodecFactory compressionCodecs =
       new CompressionCodecFactory(new Configuration());
 
@@ -124,12 +113,12 @@ public class SpatialSite {
       "spatialHadoop.mapred.MaxBytesPerRead";
 
   public static byte[] RTreeFileMarkerB;
-  
+
   static {
     // Load configuration from files
     Configuration.addDefaultResource("spatial-default.xml");
     Configuration.addDefaultResource("spatial-site.xml");
-    
+
     ByteArrayOutputStream bout = new ByteArrayOutputStream();
     DataOutputStream dout = new DataOutputStream(bout);
     try {
@@ -141,7 +130,7 @@ public class SpatialSite {
       e.printStackTrace();
     }
   }
-  
+
 
   /**
    * It sets the given class in the configuration and, in addition, it sets
@@ -156,7 +145,7 @@ public class SpatialSite {
     conf.setClass(key, klass, xface);
     addClassToPath(conf, klass);
   }
-  
+
   private static String findContainingJar(Class my_class) {
     ClassLoader loader = my_class.getClassLoader();
     String class_file = my_class.getName().replaceAll("\\.", "/") + ".class";
@@ -224,7 +213,7 @@ public class SpatialSite {
       e.printStackTrace();
     }
   }
-  
+
   /**
    * Creates a stock shape according to the given configuration.
    * It is a shortcut to {@link #getShape(Configuration, String)}
@@ -235,7 +224,7 @@ public class SpatialSite {
   public static Shape createStockShape(Configuration job) {
     return OperationsParams.getShape(job, "shape");
   }
-  
+
   /**
    * Sets the specified configuration parameter to the current value of the shape.
    * Both class name and shape values are encoded in one string and set as the
@@ -249,7 +238,7 @@ public class SpatialSite {
   public static void setShape(Configuration conf, String param, Shape shape) {
     OperationsParams.setShape(conf, param, shape);
   }
-  
+
   /**
    * Retrieves a value of a shape set earlier using {@link OperationsParams#setShape(Configuration, String, Shape)}.
    * It reads the corresponding parameter and parses it to find the class name
@@ -282,7 +271,7 @@ public class SpatialSite {
       } else {
         allFiles = fs.listStatus(dir);
       }
-      
+
       FileStatus masterFile = null;
       int nasaFiles = 0;
       for (FileStatus fileStatus : allFiles) {
@@ -376,7 +365,7 @@ public class SpatialSite {
   public static boolean isRTree(FileSystem fs, Path path) throws IOException {
     if (FileUtil.getExtensionWithoutCompression(path).equals("rtree"))
       return true;
-    
+
     FileStatus file = fs.getFileStatus(path);
     Path fileToCheck;
     if (file.isDir()) {
@@ -389,7 +378,7 @@ public class SpatialSite {
       fileToCheck = file.getPath();
     }
     InputStream fileIn = fs.open(fileToCheck);
-    
+
     // Check if file is compressed
     CompressionCodec codec = compressionCodecs.getCodec(fileToCheck);
     Decompressor decompressor = null;
@@ -408,7 +397,7 @@ public class SpatialSite {
     }
     return Arrays.equals(signature, SpatialSite.RTreeFileMarkerB);
   }
-  
+
   /**
    * Returns the cells (partitions) of a file. This functionality can be useful
    * to repartition another file using the same partitioning or to draw
@@ -425,7 +414,7 @@ public class SpatialSite {
       return null;
     return cellsOf(gIndex);
   }
-  
+
   /**
    * Set an array of cells in the job configuration. As the array might be
    * very large to store as one value, an alternative approach is used.
@@ -449,14 +438,14 @@ public class SpatialSite {
       cell.write(out);
     }
     out.close();
-    
+
     fs.deleteOnExit(tempFile);
 
     DistributedCache.addCacheFile(tempFile.toUri(), conf);
     conf.set(OUTPUT_CELLS, tempFile.getName());
     LOG.info("Partitioning file into "+cellsInfo.length+" cells");
   }
-  
+
   /**
    * Retrieves cells that were stored earlier using
    * {@link #setCells(Configuration, CellInfo[])}
@@ -474,14 +463,14 @@ public class SpatialSite {
       for (Path cacheFile : cacheFiles) {
         if (cacheFile.getName().contains(cells_file)) {
           FSDataInputStream in = FileSystem.getLocal(conf).open(cacheFile);
-          
+
           int cellCount = in.readInt();
           cells = new CellInfo[cellCount];
           for (int i = 0; i < cellCount; i++) {
             cells[i] = new CellInfo();
             cells[i].readFields(in);
           }
-          
+
           in.close();
         }
       }
@@ -499,7 +488,7 @@ public class SpatialSite {
   public static void setRectangle(Configuration conf, String name, Rectangle rect) {
     conf.set(name, rect.getMBR().toText(new Text()).toString());
   }
-  
+
   /**
    * Retrieves a rectangle from configuration parameter. The value is assumed
    * to be in text format that can be parsed using {@link Rectangle#fromText(Text)}
@@ -540,6 +529,8 @@ public class SpatialSite {
         type = DistributionType.ANTI_CORRELATED;
       else if (strType.startsWith("circle"))
         type = DistributionType.CIRCLE;
+      else if (strType.startsWith("gcluster"))
+        type = DistributionType.GAUSSIAN_CLUSTERED;
       else {
         type = null;
       }
@@ -611,7 +602,7 @@ public class SpatialSite {
     List<Rectangle> columns = new ArrayList<Rectangle>();
     for (Partition p : gIndex) {
       double x1 = p.x1, x2 = p.x2;
-      
+
       boolean matched = false;
       for (int iColumn = 0; iColumn < columns.size() && !matched; iColumn++) {
         Rectangle cmbr = columns.get(iColumn);
@@ -622,7 +613,7 @@ public class SpatialSite {
           cmbr.expand(p);
         }
       }
-      
+
       if (!matched) {
         // Create a new column
         columns.add(new Rectangle(p));
