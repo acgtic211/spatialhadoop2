@@ -1,18 +1,12 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.io;
-
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Map;
-
-import org.apache.hadoop.io.Text;
 
 import com.esri.core.geometry.ogc.OGCGeometry;
 import com.vividsolutions.jts.geom.Geometry;
@@ -20,6 +14,11 @@ import com.vividsolutions.jts.geom.GeometryFactory;
 import com.vividsolutions.jts.io.ParseException;
 import com.vividsolutions.jts.io.WKBReader;
 import com.vividsolutions.jts.io.WKTReader;
+import org.apache.hadoop.io.Text;
+
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Map;
 
 public final class TextSerializerHelper {
   /**
@@ -33,13 +32,13 @@ public final class TextSerializerHelper {
     'o' , 'p' , 'q' , 'r' , 's' , 't' ,
     'u' , 'v' , 'w' , 'x' , 'y' , 'z'
   };
-  
+
   final static boolean[] HexadecimalChars;
   final static boolean[] DecimalChars;
-  
+
   /**64 bytes to append to a string if necessary*/
   final static byte[] ToAppend = new byte[64];
-  
+
   static {
     HexadecimalChars = new boolean[256];
     DecimalChars = new boolean[256];
@@ -53,10 +52,10 @@ public final class TextSerializerHelper {
     }
     HexadecimalChars['-'] = true;
     DecimalChars['-'] = true;
-    
+
     Arrays.fill(ToAppend, (byte)' ');
   }
-  
+
   /**
    * Appends hex representation of the given number to the given string.
    * If append is set to true, a comma is also appended to the text.
@@ -78,7 +77,7 @@ public final class TextSerializerHelper {
       bytes_needed += 1;
       temp >>>= 4;
     } while (temp != 0);
-    
+
     if (toAppend != '\0')
       bytes_needed++;
 
@@ -88,14 +87,14 @@ public final class TextSerializerHelper {
     byte[] buffer = t.getBytes();
     // Position of the next character to write in the text
     int position = t.getLength() - 1;
-    
+
     if (toAppend != '\0')
       buffer[position--] = (byte) toAppend;
-    
+
     final int shift = 4;
     final int radix = 1 << shift;
     final long mask = radix - 1;
-    
+
     // Negative sign is prepended separately for negative numbers
     boolean negative = false;
     if (i < 0) {
@@ -109,7 +108,7 @@ public final class TextSerializerHelper {
     if (negative)
       buffer[position--] = '-';
   }
-  
+
   /**
    * Parses only long from the given byte array (string). The long starts at
    * offset and is len characters long.
@@ -135,7 +134,7 @@ public final class TextSerializerHelper {
     }
     return negative ? -i : i;
   }
-  
+
   /**
    * Deserializes and consumes a long from the given text. Consuming means all
    * characters read for deserialization are removed from the given text.
@@ -160,8 +159,8 @@ public final class TextSerializerHelper {
     text.set(bytes, 0, text.getLength() - i);
     return l;
   }
-  
-  
+
+
   /**
    * Deserializes and consumes a double from the given text. Consuming means all
    * characters read for deserialization are removed from the given text.
@@ -186,7 +185,7 @@ public final class TextSerializerHelper {
     text.set(bytes, 0, text.getLength() - i);
     return d;
   }
-  
+
   /**
    * Appends hex representation of the given number to the given string.
    * If append is set to true, a comma is also appended to the text.
@@ -201,7 +200,7 @@ public final class TextSerializerHelper {
       t.append(new byte[] {(byte)toAppend}, 0, 1);
     }
   }
-  
+
   public static void serializeLong(long i, Text t, char toAppend) {
     // Calculate number of bytes needed to serialize the given long
     int bytes_needed = 0;
@@ -216,7 +215,7 @@ public final class TextSerializerHelper {
       bytes_needed += 1;
       temp /= 10;
     } while (temp != 0);
-    
+
     if (toAppend != '\0')
       bytes_needed++;
 
@@ -226,10 +225,10 @@ public final class TextSerializerHelper {
     byte[] buffer = t.getBytes();
     // Position of the next character to write in the text
     int position = t.getLength() - 1;
-    
+
     if (toAppend != '\0')
       buffer[position--] = (byte) toAppend;
-    
+
     // Negative sign is prepended separately for negative numbers
     boolean negative = false;
     if (i < 0) {
@@ -244,7 +243,7 @@ public final class TextSerializerHelper {
     if (negative)
       buffer[position--] = '-';
   }
-  
+
   public static long deserializeLong(byte[] buf, int offset, int len) {
     boolean negative = false;
     if (buf[offset] == '-') {
@@ -259,7 +258,7 @@ public final class TextSerializerHelper {
     }
     return negative ? -i : i;
   }
-  
+
   public static long consumeLong(Text text, char separator) {
     int i = 0;
     byte[] bytes = text.getBytes();
@@ -275,7 +274,7 @@ public final class TextSerializerHelper {
     text.set(bytes, 0, text.getLength() - i);
     return l;
   }
-  
+
   public static void serializeInt(int i, Text t, char toAppend) {
     // Calculate number of bytes needed to serialize the given long
     int bytes_needed = 0;
@@ -290,7 +289,7 @@ public final class TextSerializerHelper {
       bytes_needed += 1;
       temp /= 10;
     } while (temp != 0);
-    
+
     if (toAppend != '\0')
       bytes_needed++;
 
@@ -300,10 +299,10 @@ public final class TextSerializerHelper {
     byte[] buffer = t.getBytes();
     // Position of the next character to write in the text
     int position = t.getLength() - 1;
-    
+
     if (toAppend != '\0')
       buffer[position--] = (byte) toAppend;
-    
+
     // Negative sign is prepended separately for negative numbers
     boolean negative = false;
     if (i < 0) {
@@ -318,7 +317,7 @@ public final class TextSerializerHelper {
     if (negative)
       buffer[position--] = '-';
   }
-  
+
   public static int deserializeInt(byte[] buf, int offset, int len) {
     boolean negative = false;
     if (buf[offset] == '-') {
@@ -333,7 +332,7 @@ public final class TextSerializerHelper {
     }
     return negative ? -i : i;
   }
-  
+
   public static int consumeInt(Text text, char separator) {
     int i = 0;
     byte[] bytes = text.getBytes();
@@ -349,11 +348,11 @@ public final class TextSerializerHelper {
     text.set(bytes, 0, text.getLength() - i);
     return l;
   }
- 
+
   private static final byte[] Separators = {'[', '#', ',', ']'};
   private static final int MapStart = 0, KeyValueSeparator = 1,
       FieldSeparator = 2, MapEnd = 3;
-  
+
   public static void consumeMap(Text text, Map<String, String> tags) {
     tags.clear();
     if (text.getLength() > 0) {
@@ -367,7 +366,7 @@ public final class TextSerializerHelper {
           i2++;
         String key = new String(tagsBytes, i1, i2 - i1);
         i1 = i2 + 1;
-        
+
         i2 = i1 + 1;
         while (i2 < text.getLength() && tagsBytes[i2] != Separators[FieldSeparator] && tagsBytes[i2] != Separators[MapEnd])
           i2++;
@@ -381,7 +380,7 @@ public final class TextSerializerHelper {
         text.set(tagsBytes, i1, text.getLength() - i1);
     }
   }
-  
+
 
   public static Text serializeMap(Text text, Map<String, String> tags) {
     if (!tags.isEmpty()) {
@@ -391,7 +390,6 @@ public final class TextSerializerHelper {
         if (first) {
           first = false;
         } else {
-          first = true;
           text.append(Separators, FieldSeparator, 1);
         }
         byte[] k = entry.getKey().getBytes();
@@ -404,7 +402,7 @@ public final class TextSerializerHelper {
     }
     return text;
   }
-  
+
   private static final byte[][] ShapeNames = { "LINESTRING".getBytes(),
     "POINT".getBytes(), "POLYGON".getBytes(), "MULTIPOINT".getBytes(),
     "MULTILINESTRING".getBytes(), "MULTIPOLYGON".getBytes(),
@@ -429,7 +427,7 @@ public final class TextSerializerHelper {
       }
       i_shape++;
     }
-    
+
     // Look for the terminator of the shape text
     int i1 = 0;
     if (bytes[i1] == '\'' || bytes[i1] == '\"') {
@@ -438,17 +436,17 @@ public final class TextSerializerHelper {
     int i2 = i1;
     while (i2 < length && bytes[i2] != separator)
       i2++;
-    
+
     String str = new String(bytes, i1, i2-i1);
-    
+
     // Remove consumed bytes from the text
     text.set(bytes, i2, text.getLength() - i2);
-    
+
     OGCGeometry geom = parseText(str);
-    
+
     return geom;
   }
-  
+
   public static OGCGeometry parseText(String str) {
     OGCGeometry geom;
     try {
@@ -465,7 +463,7 @@ public final class TextSerializerHelper {
     }
     return geom;
   }
-  
+
   /**
    * Convert a string containing a hex string to a byte array of binary.
    * For example, the string "AABB" is converted to the byte array {0xAA, 0XBB}
@@ -490,7 +488,7 @@ public final class TextSerializerHelper {
     }
     return bytes;
   }
-  
+
   public static void serializeGeometry(Text text, OGCGeometry geom, char toAppend) {
     String str = bytesToHex(geom.asBinary().array());
     byte[] str_b = str.getBytes();
@@ -498,10 +496,10 @@ public final class TextSerializerHelper {
     if (toAppend != '\0')
       text.append(new byte[] {(byte) toAppend}, 0, 1);
   }
-  
+
   private static final WKTReader wktReader = new WKTReader(new GeometryFactory());
   private static final WKBReader wkbReader = new WKBReader(new GeometryFactory());
-  
+
   public static void serializeGeometry(Text text, Geometry geom, char toAppend) {
     String wkt = geom == null? "" : geom.toText();
     byte[] wkt_b = wkt.getBytes();
@@ -509,7 +507,7 @@ public final class TextSerializerHelper {
     if (toAppend != '\0')
       text.append(new byte[] {(byte) toAppend}, 0, 1);
   }
-  
+
   public static synchronized Geometry consumeGeometryJTS(Text text, char separator) {
     // Check whether this text is a Well Known Text (WKT) or a hexed string
     boolean wkt = false;
@@ -579,7 +577,7 @@ public final class TextSerializerHelper {
     }
 
     String geom_text = new String(bytes, i1, i2);
-    
+
     try {
       if (isWKT) {
         geom = wktReader.read(geom_text);
@@ -604,14 +602,14 @@ public final class TextSerializerHelper {
 
     return geom;
   }
-  
+
   private static final boolean[] IsHex = new boolean[256];
-  
+
   private static final byte[] HexLookupTable = {
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
     'A', 'B', 'C', 'D', 'E', 'F'
   };
-  
+
   static {
     for (char c = '0'; c <= '9'; c++)
       IsHex[c] = true;
@@ -620,7 +618,7 @@ public final class TextSerializerHelper {
     for (char c = 'a'; c <= 'f'; c++)
       IsHex[c] = true;
   }
-  
+
   /**
    * Convert binary array to a hex string.
    * @param binary
