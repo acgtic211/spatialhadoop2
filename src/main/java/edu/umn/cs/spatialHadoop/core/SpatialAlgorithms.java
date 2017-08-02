@@ -1,72 +1,66 @@
 /***********************************************************************
 * Copyright (c) 2015 by Regents of the University of Minnesota.
 * All rights reserved. This program and the accompanying materials
-* are made available under the terms of the Apache License, Version 2.0 which 
+* are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
 * http://www.opensource.org/licenses/apache2.0.php.
 *
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.core;
 
-import java.io.IOException;
-import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Stack;
-import java.util.TreeSet;
-import java.util.Vector;
-
+import com.vividsolutions.jts.geom.Coordinate;
+import com.vividsolutions.jts.geom.Geometry;
+import com.vividsolutions.jts.geom.GeometryCollection;
+import com.vividsolutions.jts.geom.GeometryFactory;
+import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.mapred.PairWritable;
+import edu.umn.cs.spatialHadoop.mapreduce.RTreeRecordReader3;
+import edu.umn.cs.spatialHadoop.mapreduce.SpatialInputFormat3;
+import edu.umn.cs.spatialHadoop.mapreduce.SpatialRecordReader3;
+import edu.umn.cs.spatialHadoop.nasa.HDFRecordReader;
+import edu.umn.cs.spatialHadoop.util.BitArray;
 import edu.umn.cs.spatialHadoop.util.Parallel;
+import edu.umn.cs.spatialHadoop.util.Progressable;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
+import org.apache.hadoop.util.PriorityQueue;
 
-import com.vividsolutions.jts.geom.Coordinate;
-import com.vividsolutions.jts.geom.Geometry;
-import com.vividsolutions.jts.geom.GeometryCollection;
-import com.vividsolutions.jts.geom.GeometryFactory;
-
-import edu.umn.cs.spatialHadoop.OperationsParams;
-import edu.umn.cs.spatialHadoop.mapreduce.RTreeRecordReader3;
-import edu.umn.cs.spatialHadoop.mapreduce.SpatialInputFormat3;
-import edu.umn.cs.spatialHadoop.mapreduce.SpatialRecordReader3;
-import edu.umn.cs.spatialHadoop.nasa.HDFRecordReader;
-import edu.umn.cs.spatialHadoop.util.BitArray;
-import edu.umn.cs.spatialHadoop.util.Progressable;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.*;
 
 /**
  * Performs simple algorithms for spatial data.
- * 
+ *
  * @author Ahmed Eldawy
- * 
+ *
  */
 class RectangleNN implements Comparable<RectangleNN>   {
 	Rectangle r;
 	float dist;
 	public RectangleNN(Rectangle r, float dist){
 		this.r =r ;
-		this.dist =dist;	   
+		this.dist =dist;
 	}
 
 	public int compareTo(RectangleNN rect2) {
 		float difference = this.dist - rect2.dist;
 		if (difference < 0) {
 			return -1;
-		} 
+		}
 		if (difference > 0) {
 			return 1;
 		}
@@ -94,16 +88,19 @@ class TOPK {
 	}
 }
 
+
+
 public class SpatialAlgorithms {
   public static final Log LOG = LogFactory.getLog(SpatialAlgorithms.class);
-  
+  public enum KCPCounters { NUM_OPERATIONS };
+
   public static<S1 extends Shape, S2 extends Shape> int SpatialJoin_planeSweepFilterOnly(
 	      final List<S1> R, final List<S2> S, final ResultCollector2<S1, S2> output,
 	      Reporter reporter)
 	      throws IOException {
-	  
+
 	  	LOG.debug("Start spatial join plan sweep algorithm !!!");
-	  
+
 	    final RectangleID[] Rmbrs = new RectangleID[R.size()];
 	    for (int i = 0; i < R.size(); i++) {
 	      Rmbrs[i] = new RectangleID(i, R.get(i).getMBR());
@@ -111,8 +108,8 @@ public class SpatialAlgorithms {
 	    final RectangleID[] Smbrs = new RectangleID[S.size()];
 	    for (int i = 0; i < S.size(); i++) {
 	      Smbrs[i] = new RectangleID(i, S.get(i).getMBR());
-	    }	    
-	    
+	    }
+
 	    final IntWritable count = new IntWritable();
 	    int filterCount = SpatialJoin_rectangles(Rmbrs, Smbrs, new OutputCollector<RectangleID, RectangleID>() {
 	        @Override
@@ -125,13 +122,13 @@ public class SpatialAlgorithms {
 	          //}
 	        }
 	    }, reporter);
-	      
+
 	      LOG.debug("Filtered result size "+filterCount+", refined result size "+count.get());
-	      
+
 	      return count.get();
 	}
 
-  
+
   /**
    * @param R
    * @param S
@@ -208,7 +205,7 @@ public class SpatialAlgorithms {
     return count;
 	}
 
-  
+
   public static<S1 extends Shape, S2 extends Shape> int SpatialJoin_planeSweepFilterOnly(
 	      final S1[] R, final S2[] S, ResultCollector2<S1, S2> output, Reporter reporter) {
 	    int count = 0;
@@ -221,7 +218,7 @@ public class SpatialAlgorithms {
 	        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
 	      }
 	    };
-	    
+
 	    long t1 = System.currentTimeMillis();
 	    Arrays.sort(R, comparator);
 	    Arrays.sort(S, comparator);
@@ -244,7 +241,7 @@ public class SpatialAlgorithms {
 	              count++;
 	            }
 	            jj++;
-	            
+
 	            if (reporter != null)
 	              reporter.progress();
 	          }
@@ -276,7 +273,7 @@ public class SpatialAlgorithms {
 	    return count;
 	  }
 
-  
+
   public static<S1 extends Shape, S2 extends Shape> int SpatialJoin_planeSweep(
       final S1[] R, final S2[] S, ResultCollector2<S1, S2> output, Reporter reporter) {
     int count = 0;
@@ -289,7 +286,7 @@ public class SpatialAlgorithms {
         return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
       }
     };
-    
+
     long t1 = System.currentTimeMillis();
     Arrays.sort(R, comparator);
     Arrays.sort(S, comparator);
@@ -362,12 +359,12 @@ public class SpatialAlgorithms {
         return o1.x1 < o2.x1 ? -1 : 1;
       }
     };
-    
+
     long t1 = System.currentTimeMillis();
     LOG.debug("Spatial Join of "+ R.length+" X " + S.length + "shapes");
     Arrays.sort(R, comparator);
     Arrays.sort(S, comparator);
-    
+
     int i = 0, j = 0;
 
     try {
@@ -419,7 +416,7 @@ public class SpatialAlgorithms {
     return count;
   }
 
-  
+
   /**
    * Self join of rectangles. This method runs faster than the general version
    * because it just performs the filter step based on the rectangles.
@@ -440,7 +437,7 @@ public class SpatialAlgorithms {
         return o1.x1 < o2.x1 ? -1 : 1;
       }
     };
-    
+
     long t1 = System.currentTimeMillis();
     Arrays.sort(rs, comparator);
 
@@ -504,18 +501,18 @@ public class SpatialAlgorithms {
    */
   public static class RectangleID extends Rectangle {
     public int id;
-    
+
     public RectangleID(int id, Rectangle rect) {
       super(rect);
       this.id = id;
     }
-    
+
     public RectangleID(int id, double x1, double y1, double x2, double y2) {
       super(x1, y1, x2, y2);
       this.id = id;
     }
   }
-  
+
   /**
    * The general version of self join algorithm which works with arbitrary
    * shapes. First, it performs a filter step where it finds shapes with
@@ -537,7 +534,7 @@ public class SpatialAlgorithms {
     for (int i = 0; i < R.length; i++) {
       mbrs[i] = new RectangleID(i, R[i].getMBR());
     }
-    
+
     if (refine) {
       final IntWritable count = new IntWritable();
       int filterCount = SelfJoin_rectangles(mbrs, new OutputCollector<RectangleID, RectangleID>() {
@@ -551,9 +548,9 @@ public class SpatialAlgorithms {
           }
         }
       }, reporter);
-      
+
       LOG.debug("Filtered result size "+filterCount+", refined result size "+count.get());
-      
+
       return count.get();
     } else {
       return SelfJoin_rectangles(mbrs, new OutputCollector<RectangleID, RectangleID>() {
@@ -566,7 +563,7 @@ public class SpatialAlgorithms {
       }, reporter);
     }
   }
-  
+
   /**
    * Remove duplicate points from an array of points. Two points are considered
    * duplicate if both the horizontal and vertical distances are within a given
@@ -682,14 +679,14 @@ public class SpatialAlgorithms {
       double x2 = Math.max(coords[0].x, coords[2].x);
       double y1 = Math.min(coords[0].y, coords[2].y);
       double y2 = Math.max(coords[0].y, coords[2].y);
-      
+
       mbrs[i] = new RectangleID(i, x1, y1, x2, y2);
     }
-    
+
     // Parent link of the Set Union Find data structure
     final int[] parent = new int[mbrs.length];
     Arrays.fill(parent, -1);
-    
+
     // Group records in clusters by overlapping
     SelfJoin_rectangles(mbrs, new OutputCollector<RectangleID, RectangleID>(){
       @Override
@@ -730,7 +727,7 @@ public class SpatialAlgorithms {
       group.add(polygons[i]);
     }
     long t2 = System.currentTimeMillis();
-    
+
     Geometry[][] groupedPolygons = new Geometry[groups.size()][];
     int counter = 0;
     for (List<Geometry> group : groups.values()) {
@@ -748,7 +745,7 @@ public class SpatialAlgorithms {
    * @param polys
    * @param progress
    * @return
-   * @throws IOException 
+   * @throws IOException
    */
   public static Geometry safeUnion(List<Geometry> polys,
       Progressable progress) throws IOException {
@@ -759,18 +756,18 @@ public class SpatialAlgorithms {
     rangeStarts.push(0);
     rangeEnds.push(polys.size());
     List<Geometry> results = new ArrayList<Geometry>();
-    
+
     final GeometryFactory geomFactory = new GeometryFactory();
-    
+
     // Minimum range size that is broken into two subranges
     final int MinimumThreshold = 10;
     // Progress numerator and denominator
     int progressNum = 0, progressDen = polys.size();
-    
+
     while (!rangeStarts.isEmpty()) {
       int rangeStart = rangeStarts.pop();
       int rangeEnd = rangeEnds.pop();
-      
+
       try {
         // Union using the buffer operation
         GeometryCollection rangeInOne = (GeometryCollection) geomFactory.buildGeometry(polys.subList(rangeStart, rangeEnd));
@@ -806,7 +803,7 @@ public class SpatialAlgorithms {
       if (progress != null)
         progress.progress(progressNum/(float)progressDen);
     }
-    
+
     // Finally, union all the results
     Geometry finalResult = results.remove(results.size() - 1);
     while (!results.isEmpty()) {
@@ -834,7 +831,7 @@ public class SpatialAlgorithms {
    * </ol>
    * @param geoms
    * @return
-   * @throws IOException 
+   * @throws IOException
    */
   public static int unionGroup(final Geometry[] geoms,
       final Progressable prog, ResultCollector<Geometry> output) throws IOException {
@@ -848,7 +845,7 @@ public class SpatialAlgorithms {
       double minx = Math.min(coords[0].x, coords[2].x);
       geom.setUserData(minx);
     }
-    
+
     Arrays.sort(geoms, new Comparator<Geometry>() {
       @Override
       public int compare(Geometry o1, Geometry o2) {
@@ -860,12 +857,12 @@ public class SpatialAlgorithms {
       }
     });
     LOG.debug("Sorted "+geoms.length+" geometries by x");
-  
+
     final int MaxBatchSize = 500;
     // All polygons that are to the right of the sweep line
     List<Geometry> nonFinalPolygons = new ArrayList<Geometry>();
     int resultSize = 0;
-    
+
     long reportTime = 0;
     int i = 0;
     while (i < geoms.length) {
@@ -881,7 +878,7 @@ public class SpatialAlgorithms {
       });
       if (prog != null)
         prog.progress();
-  
+
       nonFinalPolygons.clear();
       if (batchUnion instanceof GeometryCollection) {
         GeometryCollection coll = (GeometryCollection) batchUnion;
@@ -901,7 +898,7 @@ public class SpatialAlgorithms {
       } else {
         nonFinalPolygons.add(batchUnion);
       }
-  
+
       long currentTime = System.currentTimeMillis();
       if (currentTime - reportTime > 60*1000) { // Report every one minute
         if (prog != null) {
@@ -911,17 +908,17 @@ public class SpatialAlgorithms {
         reportTime =  currentTime;
       }
     }
-    
+
     // Combine all polygons together to produce the answer
     if (output != null) {
       for (Geometry finalPolygon : nonFinalPolygons)
         output.collect(finalPolygon);
     }
     resultSize += nonFinalPolygons.size();
-      
+
     return resultSize;
   }
-  
+
   /**
    * Computes the union of multiple groups of polygons. The algorithm runs in
    * the following steps.
@@ -944,19 +941,19 @@ public class SpatialAlgorithms {
       ResultCollector<Geometry> output) throws IOException {
     final Geometry[] basicShapes = flattenGeometries(geoms);
     prog.progress();
-    
+
     final Geometry[][] groups = groupPolygons(basicShapes, prog);
     prog.progress();
-    
+
     int resultSize = 0;
     for (Geometry[] group : groups) {
       resultSize += unionGroup(group, prog, output);
       prog.progress();
     }
-    
+
     return resultSize;
   }
-  
+
   public static long spatialJoinLocal(Path[] inFiles, Path outFile, OperationsParams params) throws IOException, InterruptedException {
       // Read the inputs and store them in memory
       List<Shape>[] datasets = new List[inFiles.length];
@@ -1006,11 +1003,649 @@ public class SpatialAlgorithms {
           };
       }
       long resultCount = SpatialJoin_planeSweep(datasets[0], datasets[1], output, null);
-      
+
       if (out != null)
           out.close();
-      
+
       return resultCount;
+  }
+
+  public static class DistanceAndPair implements Writable, Cloneable, Comparable<DistanceAndPair> {
+    public Double distance;
+    public PairWritable<Point> pair = new PairWritable<Point>();
+
+    public DistanceAndPair() {
+    }
+
+    public DistanceAndPair(double d, Point a, Point b) {
+      distance = d;
+      pair.first = a;
+      pair.second = b;
+    }
+
+    public DistanceAndPair(DistanceAndPair other) {
+      this.copy(other);
+    }
+
+    public void copy(DistanceAndPair other) {
+      distance = other.distance;
+      pair.first = other.pair.first;
+      pair.second = other.pair.second;
+    }
+
+    public void set(double distance, Point refo, Point curo){
+      distance = refo.distanceTo(curo);
+      pair.first = refo.clone();
+      pair.second = curo.clone();
+    }
+
+    @Override
+    public void readFields(DataInput in) throws IOException {
+      distance = in.readDouble();
+      pair.first = new Point();
+      pair.second = new Point();
+      pair.readFields(in);
+    }
+
+    @Override
+    public void write(DataOutput out) throws IOException {
+      out.writeDouble(distance);
+      pair.write(out);
+    }
+
+    @Override
+    public String toString() {
+      StringBuffer str = new StringBuffer();
+      str.append(distance);
+      str.append("\t");
+      str.append(pair.first);
+      str.append("\t");
+      str.append(pair.second);
+      str.append("\t");
+      return str.toString();
+    }
+
+    @Override
+    public int compareTo(DistanceAndPair o) {
+      // TODO Auto-generated method stub
+      return distance.compareTo(o.distance);
+    }
+
+    @Override
+    public DistanceAndPair clone() {
+      DistanceAndPair c = new DistanceAndPair();
+      c.distance = this.distance;
+      c.pair.first = pair.first.clone();
+      c.pair.second = pair.second.clone();
+      return c;
+    }
+  }
+
+  /**
+   * Keeps KNN objects ordered by their distance descending
+   *
+   * @author Ahmed Eldawy
+   *
+   */
+  public static class KCPObjects<S extends Comparable<S>> extends org.apache.hadoop.util.PriorityQueue<S> {
+    /**
+     * A hashset of all elements currently in the heap. Used to avoid
+     * inserting the same object twice.
+     */
+    Set<S> allElements = new HashSet<S>();
+    /** Capacity of the queue */
+    private int capacity;
+
+    private boolean reducePhase = false;
+
+    public KCPObjects(int k) {
+      this.capacity = k;
+      this.reducePhase = true;
+      super.initialize(k);
+    }
+
+    public KCPObjects(int k, boolean isReducePhase) {
+      this.capacity = k;
+      this.reducePhase = isReducePhase;
+      super.initialize(k);
+    }
+
+    /**
+     * Keep elements sorted in descending order (Max heap)
+     */
+    @Override
+    protected boolean lessThan(Object a, Object b) {
+      return ((S) a).compareTo((S) b) > 0;
+    }
+
+    @Override
+    public boolean insert(S newElement) {
+      // Skip element if already there
+      if (reducePhase && allElements.contains(newElement)) {
+        // LOG.info("Ya existe:"+newElement+": "+allElements);
+        return false;
+      }
+      boolean overflow = this.size() == capacity;
+      Object overflowItem = this.top();
+      boolean inserted = super.insert(newElement);
+      if (reducePhase && inserted) {
+        if (overflow)
+          allElements.remove(overflowItem);
+        allElements.add(newElement);
+      }
+      return inserted;
+    }
+
+    public int getCapacity() {
+      return this.capacity;
+    }
+
+    public boolean isFull() {
+      return this.size()>=this.capacity;
+    }
+  }
+
+  public static PriorityQueue<DistanceAndPair> SpatialBinaryClosestPair_planeSweep(Shape[] p1, Shape[] q1, int numberk, Double delta, KCPObjects<DistanceAndPair> pq, Reporter reporter) {
+
+    final Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        if (o1 == null || o2 == null) {
+          if (o1 == o2) {
+            return 0;
+          }
+          if (o1 == null) {
+            return 1;
+          } else {
+            return -1;
+          }
+
+        }
+        if (o1.getMBR().x1 == o2.getMBR().x1)
+          return 0;
+        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
+      }
+    };
+
+    LOG.info("ordenando p de longitud " + p1.length);
+
+    Arrays.sort(p1,comparator);
+
+    LOG.info("ordenando q de longitud " + q1.length);
+    Arrays.sort(q1,comparator);
+
+    LOG.info("Calculando delta");
+
+    int gtotPoints1 = p1.length-1, gtotPoints2 = q1.length-1;
+
+    for(; gtotPoints1>=0; gtotPoints1--){
+      if(p1[gtotPoints1]!=null){
+        gtotPoints1++;
+        break;
+      }
+    }
+
+    for(; gtotPoints2>=0; gtotPoints2--){
+      if(q1[gtotPoints2]!=null){
+        gtotPoints2++;
+        break;
+      }
+    }
+
+    //LOG.info("R "+gtotPoints1+" . S "+gtotPoints2);
+
+    int i = 0, j = 0, k, stk; // local counter of the points
+    double dx, dy, ssdx, distance, gdmax = delta != null ? delta : -1;
+
+    KCPObjects<DistanceAndPair> kcpho = pq==null?new KCPObjects<DistanceAndPair>(numberk, false):pq;
+    PriorityQueue<DistanceAndPair> ho = kcpho;
+
+    DistanceAndPair aux = new DistanceAndPair();
+    Point refo, curo;
+    long leftp = -1, leftq = -1;
+    Shape[] p = Arrays.copyOf(p1, gtotPoints1 + 1);
+    p[gtotPoints1] = new Point(Double.MAX_VALUE, Double.MAX_VALUE);
+    Shape[] q = Arrays.copyOf(q1, gtotPoints2 + 1);
+    q[gtotPoints2] = new Point(Double.MAX_VALUE, Double.MAX_VALUE);
+    //LOG.info(gtotPoints1 + ":" + gtotPoints2);
+
+    // first find the most left point of two datasets
+    if (((Point) p[0]).x < ((Point) q[0]).x) { // if P[0] < Q[0]
+      // if the datasets have no intersection
+      if (((Point) p[gtotPoints1 - 1]).x <= ((Point) q[0]).x) { // if
+        // P[last]<=Q[0]
+        i = gtotPoints1; // the LEFT scan begins from i-1 index
+        // j = 0L; // the Q set is on the right side
+      }
+    } else { // else if the most left point is from set Q
+      // if the datasets have no intersection
+      if (((Point) q[gtotPoints2 - 1]).x <= ((Point) p[0]).x) { // if
+        // Q[last]<=P[0]
+        j = gtotPoints2; // the LEFT scan begins from j-1 index
+        // i = 0L; // the P set is on the right side
+      }
+    }
+
+    // if we have intersection between the two datasets
+    // 1. while the points of both sets are not finished
+    for (;;) {
+      if (reporter != null)
+        reporter.setStatus("i:" + i + ":j:" + j);
+
+      if (((Point) p[i]).x < ((Point) q[j]).x) { // if the subset is from
+        // the set P
+        // 2. for each P[i] while i < P.N and P[i].x < Q[j].x increment
+        // i
+        stk = j - 1;
+        do {
+          if (reporter != null)
+            reporter.setStatus("i:" + i + ":j:" + j);
+
+          // 3. if j-1 = leftq then continue // this run was
+          // interrupted
+          if (stk == leftq) {
+            continue;
+          }
+          // 4. set ref_point = P[i]
+          refo = ((Point) p[i]);
+          k = stk;
+          // 5. for k=j-1 to leftq decrement k
+          do {
+            // 6. set cur_point = Q[k]
+            curo = ((Point) q[k]);
+
+            if (gdmax == -1) {
+              aux.distance = refo.distanceTo(curo);
+              aux.pair.second = curo.clone();
+              aux.pair.first = refo.clone();
+              gdmax = aux.distance;
+              ho.insert(aux.clone());
+              //LOG.info("Cambiamos ho " + ho.top());
+            } else {
+              if (kcpho.size() < kcpho.getCapacity()) {
+                if (delta == null) {
+                  aux.distance = refo.distanceTo(curo);
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  //LOG.info("Cambiamos ho " + ho.top());
+                  gdmax = ho.top().distance;
+                } else {
+                  // 7. calculate distance
+                  // dx=ref_point.x-cur_point.x
+                  dx = refo.x - curo.x;
+                  // 14. if dx >= maxheap.root.dist then
+                  // reduce the leftq limit and break
+                  if (dx > gdmax) { // check if it out from
+                    // sweeping axis
+                    leftq = k; // reduce the left limit for
+                    // the
+                    // Q set
+                    break; // exit k, all other points have
+                    // longer distance
+                  } // end of if(dx >= gmaxheap.heap[1].dist)
+                  // 15.1. calculate the distance
+                  // dy=calc_dist_y_axis(ref_point,cur_point)
+                  ssdx = dx * dx;
+                  dy = curo.y - refo.y;
+                  ssdx += dy * dy;
+                  if (ssdx <= gdmax * gdmax) {
+                    if(reporter!=null)reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+
+                    distance = Math.sqrt(ssdx);
+                    aux.distance = distance;
+                    aux.pair.second = curo.clone();
+                    aux.pair.first = refo.clone();
+                    ho.insert(aux.clone());
+                    //LOG.info("Cambiamos ho " + ho.top());
+                  } // end of if(d==NUM_DIM)
+                }
+
+              } else {
+                // 7. calculate distance
+                // dx=ref_point.x-cur_point.x
+                dx = refo.x - curo.x;
+                // 14. if dx >= maxheap.root.dist then
+                // reduce the leftq limit and break
+                if (dx >= gdmax) { // check if it out from
+                  // sweeping axis
+                  leftq = k; // reduce the left limit for the
+                  // Q set
+                  break; // exit k, all other points have
+                  // longer distance
+                } // end of if(dx >= gmaxheap.heap[1].dist)
+                // 15.1. calculate the distance
+                // dy=calc_dist_y_axis(ref_point,cur_point)
+                ssdx = dx * dx;
+                dy = curo.y - refo.y;
+                ssdx += dy * dy;
+                if (ssdx < gdmax * gdmax) {
+                  if(reporter!=null)reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+
+                  distance = Math.sqrt(ssdx);
+                  aux.distance = distance;
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  gdmax = ho.top().distance;
+                  //LOG.info("Cambiamos ho " + ho.top());
+                } // end of if(d==NUM_DIM)
+
+              }
+            }
+          } while (--k > leftq); // next point of the set Q
+        } while ((((Point) p[++i]).x < ((Point) q[j]).x)); // next i :
+        // next
+        // point
+        // from the
+        // set P if
+        // the run
+        // continues
+
+      } else if (j < gtotPoints2) { // else if the set Q is not finished
+        ((Point) p[gtotPoints1]).x = ((Point) q[gtotPoints2 - 1]).x + 1;
+
+        // 18. for each Q[j] while j < Q.N and Q[j] <= P[i] increment j
+        stk = i - 1;
+        do {
+          if (reporter != null)
+            reporter.setStatus("i:" + i + ":j:" + j);
+
+          // 19. if i-1 = leftp then continue // this run was
+          // interrupted
+          if (stk == leftp) {
+            continue;
+          }
+          // 20. set ref_point = Q[j]
+          refo = ((Point) q[j]);
+          k = stk;
+          // 21. for k=i-1 to leftp decrement k
+          do {
+            // 22. set cur_point = P[k]
+            curo = ((Point) p[k]);
+
+            if (gdmax == -1) {
+              aux.distance = refo.distanceTo(curo);
+              aux.pair.second = curo.clone();
+              aux.pair.first = refo.clone();
+              gdmax = aux.distance;
+              ho.insert(aux.clone());
+              //LOG.info("Cambiamos ho " + ho.top());
+            } else {
+              if (kcpho.size() < kcpho.getCapacity()) {
+                if (delta == null) {
+                  aux.distance = refo.distanceTo(curo);
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  //LOG.info("Cambiamos ho " + ho.top());
+                  gdmax = ho.top().distance;
+                } else {
+                  // 7. calculate distance
+                  // dx=ref_point.x-cur_point.x
+                  dx = refo.x - curo.x;
+                  // 14. if dx >= maxheap.root.dist then
+                  // reduce the leftq limit and break
+                  if (dx > gdmax) { // check if it out from
+                    // sweeping axis
+                    leftp = k; // reduce the left limit for
+                    // the
+                    // Q set
+                    break; // exit k, all other points have
+                    // longer distance
+                  } // end of if(dx >= gmaxheap.heap[1].dist)
+                  // 15.1. calculate the distance
+                  // dy=calc_dist_y_axis(ref_point,cur_point)
+                  ssdx = dx * dx;
+                  dy = curo.y - refo.y;
+                  ssdx += dy * dy;
+                  if (ssdx <= gdmax * gdmax) {
+                    if(reporter!=null)reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+
+                    distance = Math.sqrt(ssdx);
+                    aux.distance = distance;
+                    aux.pair.second = curo.clone();
+                    aux.pair.first = refo.clone();
+                    ho.insert(aux.clone());
+                    //LOG.info("Cambiamos ho " + ho.top());
+                  } // end of if(d==NUM_DIM)
+                }
+
+              } else {
+                // 7. calculate distance
+                // dx=ref_point.x-cur_point.x
+                dx = refo.x - curo.x;
+                // 14. if dx >= maxheap.root.dist then
+                // reduce the leftq limit and break
+                if (dx >= gdmax) { // check if it out from
+                  // sweeping axis
+                  leftp = k; // reduce the left limit for the
+                  // Q set
+                  break; // exit k, all other points have
+                  // longer distance
+                } // end of if(dx >= gmaxheap.heap[1].dist)
+                // 15.1. calculate the distance
+                // dy=calc_dist_y_axis(ref_point,cur_point)
+                ssdx = dx * dx;
+                dy = curo.y - refo.y;
+                ssdx += dy * dy;
+                if (ssdx < gdmax * gdmax) {
+                  if(reporter!=null)reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+
+                  distance = Math.sqrt(ssdx);
+                  aux.distance = distance;
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  gdmax = ho.top().distance;
+                  //LOG.info("Cambiamos ho " + ho.top());
+                } // end of if(d==NUM_DIM)
+
+              }
+            }
+          } while (--k > leftp); // next point of the set P
+        } while (((Point) q[++j]).x <= ((Point) p[i]).x); // next j :
+        // next
+        // point
+        // from the
+        // set Q if
+        // the run
+        // continues
+        // revert the max value in the P[last].x
+        ((Point) p[gtotPoints1]).x = ((Point) q[gtotPoints2]).x;
+        // P[gtotPoints1].m[0]=Q[gtotPoints2].m[0];
+      } else {
+        break; // the process is finished
+      }
+
+    } // loop while(i < gtotPoints1 || j < gtotPoints2)
+
+    return ho;
+  }
+
+  public static PriorityQueue<DistanceAndPair> SpatialBinaryClosestPair_planeSweepClassic(Shape[] p, Shape[] q, int numberk, Double delta, KCPObjects<DistanceAndPair> pq, Reporter reporter) {
+
+    int i = 0, j = 0, k, stk; // local counter of the points
+    double dx, dy, ssdx, distance, gdmax = delta != null ? delta : -1;
+
+    final Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        if (o1 == null || o2 == null) {
+          if (o1 == o2) {
+            return 0;
+          }
+          if (o1 == null) {
+            return 1;
+          } else {
+            return -1;
+          }
+
+        }
+        if (o1.getMBR().x1 == o2.getMBR().x1)
+          return 0;
+        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
+      }
+    };
+
+    LOG.info("ordenando p de longitud " + p.length);
+
+    Arrays.sort(p,comparator);
+
+    LOG.info("ordenando q de longitud " + q.length);
+    Arrays.sort(q,comparator);
+
+    LOG.info("Calculando delta");
+
+    KCPObjects<DistanceAndPair> kcpho = pq==null?new KCPObjects<DistanceAndPair>(numberk, false):pq;
+    PriorityQueue<DistanceAndPair> ho = kcpho;
+    Point refo, curo;
+    int gtotPoints1 = p.length, gtotPoints2 = q.length;
+    DistanceAndPair aux = new DistanceAndPair();
+
+    while (i < gtotPoints1 && p[i] != null && j < gtotPoints2 && q[j] != null) {
+
+      if (reporter != null)
+        reporter.setStatus("i:" + i + ":j:" + j);
+
+      if (((Point) p[i]).x < ((Point) q[j]).x) { // if P[i] < Q[j] -- m[0]
+        // coordenada x
+        // i is constant and k begins from j for all points in Q
+        refo = ((Point) p[i]);
+        for (k = j; k < gtotPoints2 && q[k]!=null; k++) {
+          curo = ((Point) q[k]);
+          if (gdmax == -1) {
+            aux.distance = refo.distanceTo(curo);
+            aux.pair.second = curo.clone();
+            aux.pair.first = refo.clone();
+            gdmax = aux.distance;
+            ho.insert(aux.clone());
+            // LOG.info("Cambiamos ho " + ho.top());
+          } else {
+            if (kcpho.size() < kcpho.getCapacity()) {
+              if (delta == null) {
+                aux.distance = refo.distanceTo(curo);
+                aux.pair.second = curo.clone();
+                aux.pair.first = refo.clone();
+                ho.insert(aux.clone());
+                // LOG.info("Cambiamos ho " + ho.top());
+                gdmax = ho.top().distance;
+              } else {
+                dx = curo.x - refo.x; // the dx = Q[0]-P[0]
+                if (dx > gdmax) { // check if it out from
+                  // sweeping
+                  // axis
+                  break; // exit k, all other points have
+                  // longer
+                  // distance
+                }
+                if (reporter != null)
+                  reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+                distance = refo.distanceTo(curo);
+                if (distance <= gdmax) {
+                  aux.distance = distance;
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  // LOG.info("Cambiamos ho " + ho.top());
+                }
+              }
+
+            } else {
+              dx = curo.x - refo.x; // the dx = Q[0]-P[0]
+              if (dx >= gdmax) { // check if it out from sweeping
+                // axis
+                break; // exit k, all other points have longer
+                // distance
+              }
+              if (reporter != null)
+                reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+              distance = refo.distanceTo(curo);
+              if (distance < gdmax) {
+                aux.distance = distance;
+                aux.pair.second = curo.clone();
+                aux.pair.first = refo.clone();
+                ho.insert(aux.clone());
+                // LOG.info("Cambiamos ho " + ho.top());
+                gdmax = ho.top().distance;
+              }
+            }
+          }
+        } // next k
+
+        i++;
+
+      } else {
+        // j is constant and k begins from i for all points in P
+        refo = ((Point) q[j]);
+        for (k = i; k < gtotPoints1 && p[k]!=null; k++) {
+          curo = ((Point) p[k]);
+          if (gdmax == -1) {
+            aux.distance = refo.distanceTo(curo);
+            aux.pair.second = curo.clone();
+            aux.pair.first = refo.clone();
+            gdmax = aux.distance;
+            ho.insert(aux.clone());
+            // LOG.info("Cambiamos ho " + ho.top());
+          } else {
+            if (kcpho.size() < kcpho.getCapacity()) {
+              if (delta == null) {
+                aux.distance = refo.distanceTo(curo);
+                aux.pair.second = curo.clone();
+                aux.pair.first = refo.clone();
+                ho.insert(aux.clone());
+                // LOG.info("Cambiamos ho " + ho.top());
+                gdmax = ho.top().distance;
+              } else {
+                dx = curo.x - refo.x; // the dx = P[0]-Q[0]
+                if (dx > gdmax) { // check if it out from
+                  // sweeping
+                  // axis
+                  break; // exit k, all other points have
+                  // longer
+                  // distance
+                }
+                if (reporter != null)
+                  reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+                distance = refo.distanceTo(curo);
+                if (distance <= gdmax) {
+                  aux.distance = distance;
+                  aux.pair.second = curo.clone();
+                  aux.pair.first = refo.clone();
+                  ho.insert(aux.clone());
+                  // LOG.info("Cambiamos ho " + ho.top());
+                }
+              }
+
+            } else {
+              dx = curo.x - refo.x; // the dx = P[0]-Q[0]
+              if (dx >= gdmax) { // check if it out from sweeping
+                // axis
+                break; // exit k, all other points have longer
+                // distance
+              }
+              if (reporter != null)
+                reporter.getCounter(KCPCounters.NUM_OPERATIONS).increment(1);
+              distance = refo.distanceTo(curo);
+              if (distance < gdmax) {
+                aux.distance = distance;
+                aux.pair.second = curo.clone();
+                aux.pair.first = refo.clone();
+                ho.insert(aux.clone());
+                gdmax = ho.top().distance;
+                // LOG.info("Cambiamos ho " + ho.top());
+              }
+            }
+          }
+        } // next k
+
+        j++;
+
+      }
+    } // loop while (i < gtotPoints1 && j < gtotPoints2) }
+
+    return ho;
+
   }
 
 }
