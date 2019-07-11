@@ -8,32 +8,11 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop;
 
-import java.awt.Color;
-import java.io.IOException;
-import java.lang.reflect.Array;
-import java.util.List;
-import java.util.Vector;
-import java.util.regex.Pattern;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapreduce.InputSplit;
-import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.util.GenericOptionsParser;
-
-import edu.umn.cs.spatialHadoop.core.CSVOGC;
-import edu.umn.cs.spatialHadoop.core.OGCESRIShape;
-import edu.umn.cs.spatialHadoop.core.OGCJTSShape;
+import edu.umn.cs.spatialHadoop.core.*;
 import edu.umn.cs.spatialHadoop.core.Point;
 import edu.umn.cs.spatialHadoop.core.Polygon;
 import edu.umn.cs.spatialHadoop.core.Rectangle;
-import edu.umn.cs.spatialHadoop.core.ResultCollector;
 import edu.umn.cs.spatialHadoop.core.Shape;
-import edu.umn.cs.spatialHadoop.core.SpatialSite;
 import edu.umn.cs.spatialHadoop.indexing.Partition;
 import edu.umn.cs.spatialHadoop.io.Text2;
 import edu.umn.cs.spatialHadoop.io.TextSerializable;
@@ -46,6 +25,22 @@ import edu.umn.cs.spatialHadoop.operations.LocalSampler;
 import edu.umn.cs.spatialHadoop.osm.OSMEdge;
 import edu.umn.cs.spatialHadoop.osm.OSMPoint;
 import edu.umn.cs.spatialHadoop.osm.OSMPolygon;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.InputSplit;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.util.GenericOptionsParser;
+
+import java.awt.*;
+import java.io.IOException;
+import java.lang.reflect.Array;
+import java.util.List;
+import java.util.Vector;
+import java.util.regex.Pattern;
 
 /**
  * A class that encapsulates all parameters sent for an operations implemented
@@ -440,7 +435,12 @@ public class OperationsParams extends Configuration {
 		S[] shapes = (S[]) Array.newInstance(stock.getClass(), values.length);
 		for (int i = 0; i < values.length; i++) {
 			shapes[i] = (S) stock.clone();
-			shapes[i].fromText(new Text(values[i]));
+			int separatorIndex = values[i].indexOf(ShapeValueSeparator);
+			String shapeValue = values[i];
+			if (separatorIndex != -1) {
+				shapeValue = shapeValue.substring(separatorIndex + ShapeValueSeparator.length());
+			}
+			shapes[i].fromText(new Text(shapeValue));
 		}
 		return shapes;
 	}
