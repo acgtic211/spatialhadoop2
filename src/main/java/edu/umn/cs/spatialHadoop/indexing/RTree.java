@@ -1807,4 +1807,277 @@ public class RTree<T extends Shape> implements Writable, Iterable<T>, Closeable 
 
     return kcpho;
   }
+
+  public static <S1 extends Shape, S2 extends Shape> int spatialEpsilonJoin(final RTree<S1> R, final RTree<S2> S,
+                                                                            final double epsilon, final ResultCollector2<S1, S2> output, final Reporter reporter) throws IOException {
+    try {
+      if (R.treeStartOffset >= 0 && S.treeStartOffset >= 0) {
+        // Both trees are read from disk
+        // LOG.info("DISCOOOOO");
+        return spatialEpsilonJoinDisk(R, S, epsilon, output, reporter);
+      } else {
+        // LOG.info("MEMORIA");
+        return spatialEpsilonJoinMemory(R, S, epsilon, output, reporter);
+      }
+    } catch (TopologyException e) {
+      e.printStackTrace();
+      return 0;
+    }
+  }
+
+  protected static <S1 extends Shape, S2 extends Shape> int spatialEpsilonJoinMemory(final RTree<S1> R,
+                                                                                     final RTree<S2> S, final double epsilon, final ResultCollector2<S1, S2> output, final Reporter reporter)
+      throws IOException {
+    S1[] rs = (S1[]) Array.newInstance(R.stockObject.getClass(), R.getElementCount());
+    int i = 0;
+    for (S1 r : R)
+      rs[i++] = (S1) r.clone();
+    if (i != rs.length)
+      throw new RuntimeException(i + "!=" + rs.length);
+
+    S2[] ss = (S2[]) Array.newInstance(S.stockObject.getClass(), S.getElementCount());
+    i = 0;
+    for (S2 s : S)
+      ss[i++] = (S2) s.clone();
+    if (i != ss.length)
+      throw new RuntimeException(i + "!=" + ss.length);
+
+    return SpatialAlgorithms.SpatialEpsilonJoin_planeSweep(rs, ss, epsilon, output, reporter);
+  }
+
+  protected static <S1 extends Shape, S2 extends Shape> int spatialEpsilonJoinDisk(final RTree<S1> R,
+                                                                                   final RTree<S2> S, final double epsilon, final ResultCollector2<S1, S2> output, final Reporter reporter)
+      throws IOException {
+    PriorityQueue<Long> nodesToJoin = new PriorityQueue<Long>(R.nodeCount + S.nodeCount);
+
+    // Start with the two roots
+    nodesToJoin.add(0L);
+
+    // Caches to keep the retrieved data records. Helpful when it reaches
+    // the
+    // leaves and starts to read objects from the two trees
+    LruCache<Integer, Shape[]> r_records_cache = new LruCache<Integer, Shape[]>(R.degree * 2);
+    LruCache<Integer, Shape[]> s_records_cache = new LruCache<Integer, Shape[]>(S.degree * R.degree * 4);
+
+    Text line = new Text2();
+
+    int result_count = 0;
+
+    LineReader r_lr = null, s_lr = null;
+    // Last offset read from shape and s
+    int r_last_offset = 0;
+    int s_last_offset = 0;
+
+    final Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        if (o1 == null || o2 == null) {
+          if (o1 == o2) {
+            return 0;
+          }
+          if (o1 == null) {
+            return 1;
+          } else {
+            return -1;
+          }
+
+        }
+        if (o1.getMBR().x1 == o2.getMBR().x1)
+          return 0;
+        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
+      }
+    };
+
+    while (!nodesToJoin.isEmpty()) {
+      long nodes_to_join = nodesToJoin.remove();
+      int r_node = (int) (nodes_to_join >>> 32);
+      int s_node = (int) (nodes_to_join & 0xFFFFFFFF);
+
+      // Compute the overlap between the children of the two nodes
+      // If a node is non-leaf, its children are other nodes
+      // If a node is leaf, its children are data records
+      boolean r_leaf = r_node >= R.nonLeafNodeCount;
+      boolean s_leaf = s_node >= S.nonLeafNodeCount;
+
+      if (!r_leaf && !s_leaf) {
+        // Both are internal nodes, read child nodes under them
+        // Find overlaps using a simple cross join (TODO: Use
+        // plane-sweep)
+        for (int i = 0; i < R.degree; i++) {
+          int new_r_node = r_node * R.degree + i + 1;
+          for (int j = 0; j < S.degree; j++) {
+            int new_s_node = s_node * S.degree + j + 1;
+            if (R.nodes[new_r_node].getMinDistance(S.nodes[new_s_node]) <= epsilon) {
+              long new_pair = (((long) new_r_node) << 32) | new_s_node;
+              nodesToJoin.add(new_pair);
+            }
+          }
+        }
+      } else if (r_leaf && !s_leaf) {
+        // R is a leaf node while S is an internal node
+        // Compare the leaf node in R against all child nodes of S
+        for (int j = 0; j < S.degree; j++) {
+          int new_s_node = s_node * S.degree + j + 1;
+          if (R.nodes[r_node].getMinDistance(S.nodes[new_s_node]) <= epsilon) {
+            long new_pair = (((long) r_node) << 32) | new_s_node;
+            nodesToJoin.add(new_pair);
+          }
+        }
+      } else if (!r_leaf && s_leaf) {
+        // R is an internal node while S is a leaf node
+        // Compare child nodes of R against the leaf node in S
+        for (int i = 0; i < R.degree; i++) {
+          int new_r_node = r_node * R.degree + i + 1;
+          if (R.nodes[new_r_node].getMinDistance(S.nodes[s_node]) <= epsilon) {
+            long new_pair = (((long) new_r_node) << 32) | s_node;
+            nodesToJoin.add(new_pair);
+          }
+        }
+      } else if (r_leaf && s_leaf) {
+        // Both are leaf nodes, join objects under them
+        int r_start_offset = R.dataOffset[r_node];
+        int r_end_offset = R.dataOffset[r_node + 1];
+        int s_start_offset = S.dataOffset[s_node];
+        int s_end_offset = S.dataOffset[s_node + 1];
+
+        // Read or retrieve r_records
+        Shape[] r_records = r_records_cache.get(r_start_offset);
+        if (r_records == null) {
+          int cache_key = r_start_offset;
+          r_records = r_records_cache.popUnusedEntry();
+          if (r_records == null) {
+            r_records = new Shape[R.degree * 2];
+          }
+
+          // Need to read it from stream
+          if (r_last_offset != r_start_offset) {
+            long seekTo = r_start_offset + R.treeStartOffset;
+            R.data.seek(seekTo);
+            r_lr = new LineReader(R.data);
+          }
+          int record_i = 0;
+          while (r_start_offset < r_end_offset) {
+            r_start_offset += r_lr.readLine(line);
+            if (r_records[record_i] == null)
+              r_records[record_i] = R.stockObject.clone();
+            r_records[record_i].fromText(line);
+            record_i++;
+          }
+          r_last_offset = r_start_offset;
+          // Nullify other records
+          while (record_i < r_records.length)
+            r_records[record_i++] = null;
+          r_records_cache.put(cache_key, r_records);
+        }
+
+        // Read or retrieve s_records
+        Shape[] s_records = s_records_cache.get(s_start_offset);
+        if (s_records == null) {
+          int cache_key = s_start_offset;
+
+          // Need to read it from stream
+          if (s_lr == null || s_last_offset != s_start_offset) {
+            // Need to reposition s_lr (LineReader of S)
+            long seekTo = s_start_offset + S.treeStartOffset;
+            S.data.seek(seekTo);
+            s_lr = new LineReader(S.data);
+          }
+          s_records = s_records_cache.popUnusedEntry();
+          if (s_records == null) {
+            s_records = new Shape[S.degree * 2];
+          }
+          int record_i = 0;
+          while (s_start_offset < s_end_offset) {
+            s_start_offset += s_lr.readLine(line);
+            if (s_records[record_i] == null)
+              s_records[record_i] = S.stockObject.clone();
+            s_records[record_i].fromText(line);
+            record_i++;
+          }
+          // Nullify other records
+          while (record_i < s_records.length)
+            s_records[record_i++] = null;
+          // Put in cache
+          s_records_cache.put(cache_key, s_records);
+          s_last_offset = s_start_offset;
+        }
+
+        result_count += edjq(r_records, s_records, epsilon, comparator, output);
+
+      }
+      if (reporter != null)
+        reporter.progress();
+    }
+    return result_count;
+  }
+
+  private static <S1 extends Shape, S2 extends Shape> int edjq(Shape[] r_records, Shape[] s_records, double epsilon,
+                                                               Comparator<Shape> comparator, ResultCollector2<S1, S2> output) {
+
+    int result_count = 0;
+
+    int i = 0, j = 0, k; // local counter of the points
+    double dx, distance, gdmax = epsilon;
+    Shape refo, curo;
+    int gtotPoints1 = r_records.length, gtotPoints2 = s_records.length;
+
+    LOG.info("ALGORITMO CON " + gtotPoints1 + ":" + gtotPoints2);
+    Arrays.sort(r_records, comparator);
+    Arrays.sort(s_records, comparator);
+    while ((i < gtotPoints1 && r_records[i] != null) && (j < gtotPoints2 && s_records[j] != null)) {
+
+      if (comparator.compare(r_records[i], s_records[j]) < 0) {
+        // coordenada x
+        // i is constant and k begins from j for all points in Q
+        refo = r_records[i];
+        for (k = j; k < gtotPoints2 && s_records[k] != null; k++) {
+          curo = s_records[k];
+          dx = curo.getMBR().x1 - refo.getMBR().x2; // the dx =
+          // Q[0]-P[0]
+          if (dx >= gdmax) { // check if it out from sweeping
+            // axis
+            break; // exit k, all other points have longer
+            // distance
+          }
+          distance = refo.getMBR().getMinDistance(curo.getMBR());
+          if (distance < gdmax) {
+            result_count++;
+            if (output != null) {
+              output.collect((S1) refo, (S2) curo);
+            }
+          }
+        } // next k
+
+        i++;
+
+      } else {
+        // j is constant and k begins from i for all points in P
+        refo = s_records[j];
+        for (k = i; k < gtotPoints1 && r_records[k] != null; k++) {
+          curo = r_records[k];
+          dx = curo.getMBR().x1 - refo.getMBR().x2; // the dx =
+          // P[0]-Q[0]
+          if (dx >= gdmax) { // check if it out from sweeping
+            // axis
+            break; // exit k, all other points have longer
+            // distance
+          }
+          distance = refo.getMBR().getMinDistance(curo.getMBR());
+          if (distance < gdmax) {
+            result_count++;
+            if (output != null) {
+              output.collect((S1) refo, (S2) curo);
+            }
+          }
+
+        } // next k
+
+        j++;
+
+      }
+    } // loop while (i < gtotPoints1 && j < gtotPoints2) }
+
+    ///////////////////////////////////////////////////////////////////
+    return result_count;
+  }
 }
