@@ -8,12 +8,16 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.util;
 
+import edu.umn.cs.spatialHadoop.io.TextSerializable;
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-
-import org.apache.hadoop.io.Writable;
 
 /**
  * An array of bits which is stored efficiently in memory and can be serialized
@@ -21,7 +25,7 @@ import org.apache.hadoop.io.Writable;
  * @author Ahmed Eldawy
  *
  */
-public class BitArray implements Writable {
+public class BitArray implements Writable, TextSerializable {
 
   /**Number of bits per entry*/
   private static final int BitsPerEntry = 64;
@@ -137,5 +141,32 @@ public class BitArray implements Writable {
     for (int i = 0; i < entries.length; i++)
       result.entries[i] = this.entries[i] | other.entries[i];
     return result;
+  }
+
+  @Override
+  public Text toText(Text text) {
+    TextSerializerHelper.serializeInt(entries.length,text,',');
+    ByteBuffer bbuffer = ByteBuffer.allocate(entries.length * BitsPerEntry / 8);
+    for (long entry : entries)
+      bbuffer.putLong(entry);
+    if (bbuffer.remaining() > 0)
+      throw new RuntimeException("Error calculating the size of the buffer");
+    byte[] base64 = Base64.encodeBase64(bbuffer.array());
+    text.append(base64,0,base64.length);
+    //text.append(bbuffer.array(),bbuffer.arrayOffset(), bbuffer.position() - bbuffer.arrayOffset());
+    return text;
+  }
+
+  @Override
+  public void fromText(Text text) {
+    int count = TextSerializerHelper.consumeInt(text,',');
+    if (entries == null || entries.length != count)
+      entries = new long[count];
+    byte[] buffer = Base64.decodeBase64(text.getBytes());
+    ByteBuffer bbuffer = ByteBuffer.wrap(buffer);
+    for (int i = 0; i < entries.length; i++)
+      entries[i] = bbuffer.getLong();
+    /*if (bbuffer.hasRemaining())
+      throw new RuntimeException("Did not consume all entries");*/
   }
 }
