@@ -139,6 +139,11 @@ public class Main {
 
       pgd.addClass("kcpqMBR", KClosestPairsQueryMbr.class,
           "Computes the top k closest pairs of two input set of points");
+      pgd.addClass("knnj", KNNJ.class,
+          "Computes the knn join of two input set of points");
+
+      pgd.addClass("knnj2", KNNJ2.class,
+          "Computes the knn join of two input set of points");
       pgd.addClass("edrj", EDRJ.class,
           "Computes the knn join of two input set of points");
 
