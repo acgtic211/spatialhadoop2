@@ -8,6 +8,19 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.indexing;
 
+import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.core.*;
+import edu.umn.cs.spatialHadoop.io.TextSerializable;
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
+import edu.umn.cs.spatialHadoop.mapred.ShapeIterRecordReader;
+import edu.umn.cs.spatialHadoop.mapred.SpatialRecordReader.ShapeIterator;
+import edu.umn.cs.spatialHadoop.util.BitArray;
+import edu.umn.cs.spatialHadoop.util.IntArray;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapred.FileSplit;
+import org.apache.hadoop.util.GenericOptionsParser;
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -16,27 +29,12 @@ import java.util.Arrays;
 import java.util.Queue;
 import java.util.Vector;
 
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.mapred.FileSplit;
-import org.apache.hadoop.util.GenericOptionsParser;
-
-import edu.umn.cs.spatialHadoop.OperationsParams;
-import edu.umn.cs.spatialHadoop.core.CellInfo;
-import edu.umn.cs.spatialHadoop.core.Point;
-import edu.umn.cs.spatialHadoop.core.Rectangle;
-import edu.umn.cs.spatialHadoop.core.ResultCollector;
-import edu.umn.cs.spatialHadoop.core.Shape;
-import edu.umn.cs.spatialHadoop.mapred.ShapeIterRecordReader;
-import edu.umn.cs.spatialHadoop.mapred.SpatialRecordReader.ShapeIterator;
-import edu.umn.cs.spatialHadoop.util.BitArray;
-import edu.umn.cs.spatialHadoop.util.IntArray;
-
 /**
  * Partition the space based on a Quad tree
  * @author Ahmed Eldawy
  *
  */
-public class QuadTreePartitioner extends Partitioner {
+public class QuadTreePartitioner extends Partitioner implements TextSerializable {
   /**The minimal bounding rectangle of the underlying file*/
   protected final Rectangle mbr = new Rectangle();
   // TODO instead of storing leaf node IDs, store them in a bit array to ensure
@@ -252,6 +250,41 @@ public class QuadTreePartitioner extends Partitioner {
     }
     
     return cellInfo;
+  }
+
+  @Override
+  public Text toText(Text text) {
+    final byte[] Comma = ",".getBytes();
+    TextSerializerHelper.serializeInt(leafNodeIDs.length, text, ',');
+    for(int theInt : leafNodeIDs){
+      TextSerializerHelper.serializeInt(theInt, text, ',');
+    }
+    mbr.toText(text);
+    text.append(Comma, 0, Comma.length);
+    leafNodes.toText(text);
+
+    return text;
+  }
+
+
+  @Override
+  public void fromText(Text text) {
+    int count = TextSerializerHelper.consumeInt(text, ',');
+    this.leafNodeIDs = new int[count];
+    for(int i = 0; i < leafNodeIDs.length; i++){
+      leafNodeIDs[i]=TextSerializerHelper.consumeInt(text, ',');
+    }
+    mbr.fromText(text);
+    text.set(text.getBytes(), 1, text.getLength() - 1);
+    leafNodes = new BitArray();
+    leafNodes.fromText(text);
+  }
+
+  @Override
+  public String toString() {
+    Text aux = new Text();
+    this.toText(aux);
+    return aux.toString();
   }
 
   public static void main(String[] args) throws IOException {
