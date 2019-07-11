@@ -13,6 +13,8 @@ import com.vividsolutions.jts.geom.Geometry;
 import com.vividsolutions.jts.geom.GeometryCollection;
 import com.vividsolutions.jts.geom.GeometryFactory;
 import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.io.TextSerializable;
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
 import edu.umn.cs.spatialHadoop.mapred.PairWritable;
 import edu.umn.cs.spatialHadoop.mapreduce.RTreeRecordReader3;
 import edu.umn.cs.spatialHadoop.mapreduce.SpatialInputFormat3;
@@ -25,6 +27,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.ArrayWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
@@ -1034,7 +1037,7 @@ public class SpatialAlgorithms {
     }
 
     public void set(double distance, Point refo, Point curo){
-      distance = refo.distanceTo(curo);
+      this.distance = refo.distanceTo(curo);
       pair.first = refo.clone();
       pair.second = curo.clone();
     }
@@ -1129,8 +1132,9 @@ public class SpatialAlgorithms {
       Object overflowItem = this.top();
       boolean inserted = super.insert(newElement);
       if (reducePhase && inserted) {
-        if (overflow)
+        if (overflow) {
           allElements.remove(overflowItem);
+        }
         allElements.add(newElement);
       }
       return inserted;
@@ -1646,6 +1650,657 @@ public class SpatialAlgorithms {
 
     return ho;
 
+  }
+
+  public static class ShapeNN<S extends Shape> implements Writable,Cloneable,Comparable<ShapeNN<S>>,TextSerializable   {
+    public S shape;
+    public double dist;
+
+
+    public ShapeNN(S r, double dist){
+      this.shape = r ;
+      this.dist =dist;
+    }
+
+    public int compareTo(ShapeNN<S> rect2) {
+      double difference = this.dist - rect2.dist;
+      if (difference < 0) {
+        return -1;
+      }
+      if (difference > 0) {
+        return 1;
+      }
+      return 0;
+
+    }
+
+    @Override
+    public void write(DataOutput out) throws IOException {
+      out.writeDouble(dist);
+      shape.write(out);
+    }
+
+    @Override
+    public void readFields(DataInput in) throws IOException {
+      dist=in.readDouble();
+      shape.readFields(in);
+    }
+
+    @Override
+    public Text toText(Text text) {
+      TextSerializerHelper.serializeDouble(dist,text,',');
+      return shape.toText(text);
+    }
+
+    @Override
+    public void fromText(Text text) {
+      dist = TextSerializerHelper.consumeDouble(text, ',');
+      shape.fromText(text);
+    }
+
+    @Override
+    public ShapeNN<S> clone() {
+      ShapeNN<S> c = new ShapeNN<S>((S) shape.clone(),dist);
+      return c;
+    }
+
+  }
+
+  public static class TOPKNN<S extends Shape> extends ArrayWritable implements Cloneable,TextSerializable {
+    public KCPObjects<ShapeNN<Shape>> heap;
+    public int k;
+    public long cellId;
+    Shape shape;
+
+    public TOPKNN() {
+      super(ShapeNN.class);
+    }
+
+    public TOPKNN(int k) {
+      super(ShapeNN.class);
+      heap = new KCPObjects<ShapeNN<Shape>>(k);
+      this.k = k;
+    }
+
+    public TOPKNN(S shape, int k) {
+      super(ShapeNN.class);
+      this.shape=shape;
+      heap = new KCPObjects<ShapeNN<Shape>>(k);
+      this.k = k;
+    }
+
+    public boolean add(S r,double dist) {
+      return heap.insert(new ShapeNN<Shape>(r, dist));
+			/*if (this.heap.size() > k) {
+				// Remove largest element in set (to keep it of size k)
+				this.heap.remove(this.heap.last());
+			}*/
+
+    }
+
+    public void clear(){
+      heap.allElements.clear();
+      heap.clear();
+    }
+
+    @Override
+    public Text toText(Text text) {
+      TextSerializerHelper.serializeLong(cellId, text, ',');
+
+      TextSerializerHelper.serializeInt(heap.size(), text, ',');
+
+      double maxSize = heap.top()!=null?heap.top().dist:Double.MAX_VALUE;
+
+      TextSerializerHelper.serializeDouble(maxSize, text, ',');
+
+      Text aux = new Text();
+      boolean first = true;
+      for(ShapeNN<Shape> ele : heap.allElements){
+        if(first){
+          first=false;
+        }else{
+          final byte[] Comma = ",".getBytes();
+          text.append(Comma, 0, Comma.length);
+        }
+        aux = ele.toText(text);
+
+      }
+      return aux;
+
+    }
+
+    @Override
+    public void fromText(Text text) {
+      cellId=TextSerializerHelper.consumeLong(text, ',');
+      int newSize = TextSerializerHelper.consumeInt(text, ',');
+      double maxSize = TextSerializerHelper.consumeDouble(text, ',');
+      boolean first = true;
+      for(int i = 0; i < newSize; i++){
+        if(first){
+          first=false;
+        }else{
+          text.set(text.getBytes(), 1, text.getLength() - 1);
+        }
+        ShapeNN<Shape> ele = new ShapeNN<Shape>(shape.clone(), 0);
+        ele.fromText(text);
+        heap.insert(ele.clone());
+      }
+    }
+
+    @Override
+    public TOPKNN<S> clone() {
+      TOPKNN<S> c = new TOPKNN<S>(k);
+      for(ShapeNN<Shape> ele:heap.allElements){
+        c.heap.insert(ele.clone());
+      }
+      c.cellId = this.cellId;
+      return c;
+
+
+    }
+
+    @Override
+    public void readFields(DataInput in) throws IOException {
+      k = in.readInt();
+      heap = new KCPObjects<ShapeNN<Shape>>(k);
+      cellId = in.readLong();
+      int newSize = in.readInt();
+      if(newSize>0) {
+        shape = new Point();
+        for (int i = 0; i < newSize; i++) {
+          ShapeNN<Shape> ele = new ShapeNN<Shape>(shape.clone(), 0);
+          ele.readFields(in);
+          heap.insert(ele.clone());
+        }
+      }
+    }
+
+    @Override
+    public void write(DataOutput out) throws IOException {
+      out.writeInt(k);
+      out.writeLong(cellId);
+      out.writeInt(heap.size());
+      for(ShapeNN<Shape> ele : heap.allElements){
+        ele.write(out);
+      }
+    }
+  }
+
+
+
+  public static <S1 extends Shape, S2 extends Shape> void KNNJoin_brute(List<S1> R, List<S2> S,
+                                                                             int cellId, int k, ResultCollector2<S1, ArrayWritable> output, Reporter reporter) {
+
+    int count = 0;
+
+    Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        if (o1.getMBR().x1 == o2.getMBR().x1)
+          return 0;
+        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
+      }
+    };
+
+    long t1 = System.currentTimeMillis();
+    LOG.info("Joining lists "+ R.size()+" with "+S.size());
+    Collections.sort(R, comparator);
+    Collections.sort(S, comparator);
+
+    int i = 0, j = 0;
+
+    try {
+      S1 r;
+      S2 s;
+      TOPKNN<S2> topKNN = new TOPKNN<S2>(k);
+      topKNN.cellId = cellId;
+      for(;i<R.size();i++){
+
+        r = R.get(i);
+
+        for(;j<S.size();j++){
+
+          s = S.get(j);
+          double dist = r.getMBR().getMinDistance(s.getMBR());
+          topKNN.add(s, dist);
+        }
+
+        output.collect(r, topKNN.clone());
+        topKNN.clear();
+      }
+      if (reporter !=  null)
+        reporter.progress();
+
+    } catch (RuntimeException e) {
+      e.printStackTrace();
+    }
+    long t2 = System.currentTimeMillis();
+    LOG.info("Finished plane sweep in "+(t2-t1)+" millis and found "+count+" pairs");
+
+  }
+
+  public static <S1 extends Shape, S2 extends Shape> void KNNJoin_planeSweep(List<S1> R, List<S2> S,
+                                                                             long cellId, int k, ResultCollector2<S1, ArrayWritable> output, Reporter reporter) {
+     KNNJoin_planeSweep(R,null,S,cellId,k,output,reporter);
+  }
+    public static <S1 extends Shape, S2 extends Shape> void KNNJoin_planeSweep(List<S1> R, List<Double> distances, List<S2> S,
+                                                                             long cellId, int k, ResultCollector2<S1, ArrayWritable> output, Reporter reporter) {
+
+    int count = 0;
+
+    Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        Rectangle rect_o1, rect_o2;
+        rect_o1 = o1.getMBR();
+        rect_o2 = o2.getMBR();
+        if (rect_o1.x1 == rect_o2.x1)
+          return 0;
+        return rect_o1.x1 < rect_o2.x1 ? -1 : 1;
+      }
+    };
+
+    long t1 = System.currentTimeMillis();
+    LOG.info("Joining lists "+ R.size()+" with "+S.size());
+    /*if(distances==null)
+      Collections.sort(R, comparator);*/
+    Collections.sort(S, comparator);
+
+
+    int i,j;
+
+    try {
+      S1 r;
+      Rectangle rect_r;
+      S2 s;
+      Rectangle rect_s;
+      TOPKNN<S2> topKNN = new TOPKNN<S2>(k);
+      topKNN.cellId = cellId;
+      for(i=0;i<R.size();i++){
+
+        r = R.get(i);
+        rect_r = r.getMBR();
+
+        if(S.size()>0) {
+          int left = 0;
+          int right = S.size() - 1;
+          int m = 0;
+
+          while (left <= right) {
+            m = (left + right) / 2;
+            //    	  If Am = T, the search is done; return m.
+            //    			  If Am < T, set L to m + 1 and go to step 2.
+            //    			  If Am > T, set R to m - 1 and go to step 2.
+            s = S.get(m);
+            rect_s = s.getMBR();
+
+            if (rect_s.x1 == rect_r.x1) {
+              break;
+            } else {
+              if (rect_s.x1 < rect_r.x1) {
+                left = m + 1;
+              } else {
+                right = m - 1;
+              }
+            }
+
+          }
+
+          int pl, pr;
+
+          if (m < 0) {
+            m = 0;
+            pl = m;
+            pr = m + 1;
+          } else if (m > S.size() - 1) {
+            m = S.size() - 1;
+            pl = m - 1;
+            pr = m;
+          } else {
+            pl = m;
+            pr = m + 1;
+          }
+
+          double gdmax = Double.MAX_VALUE;
+          if(distances!=null){
+            gdmax = distances.get(i);
+          }
+          boolean flagPL = pl < 0;
+          boolean flagPR = pr > S.size() - 1;
+
+          while (!flagPL || !flagPR) {
+            if (!flagPL) {
+              s = S.get(pl);
+              rect_s = s.getMBR();
+
+              double dx = Math.abs(rect_r.x1 - rect_s.x1);
+              if (dx > gdmax || (dx == gdmax && topKNN.heap.isFull())) {
+                flagPL = true;
+                continue;
+              }
+
+              double dy = Math.abs(rect_r.y1 - rect_s.y1);
+              if (dy > gdmax || (dy == gdmax && topKNN.heap.isFull())) {
+                pl--;
+                flagPL = pl < 0;
+                continue;
+              }
+
+              double dist = rect_r.getMinDistance(rect_s);
+              if(dist < gdmax || (dist == gdmax && !topKNN.heap.isFull())){
+                topKNN.add(s, dist);
+                if (topKNN.heap.isFull()) {
+                  gdmax = topKNN.heap.top().dist;
+                }
+              }
+
+              pl--;
+              flagPL = pl < 0;
+            }
+
+            if (!flagPR) {
+              s = S.get(pr);
+              rect_s = s.getMBR();
+              double dx = Math.abs(rect_r.x1 - rect_s.x1);
+
+              if (dx > gdmax|| (dx == gdmax && topKNN.heap.isFull())) {
+                flagPR = true;
+                continue;
+              }
+
+              double dy = Math.abs(rect_r.y1 - rect_s.y1);
+              if (dy > gdmax || (dy == gdmax && topKNN.heap.isFull())) {
+                pr++;
+                flagPR = pr > S.size() - 1;
+                continue;
+              }
+
+              double dist = rect_r.getMinDistance(rect_s);
+              if(dist < gdmax || (dist == gdmax && !topKNN.heap.isFull())){
+                topKNN.add(s, dist);
+                if (topKNN.heap.isFull()) {
+                  gdmax = topKNN.heap.top().dist;
+                }
+              }
+
+              pr++;
+              flagPR = pr > S.size() - 1;
+            }
+
+          }
+
+        }
+        if(topKNN.heap.size()!=0)
+          output.collect(r, topKNN.clone());
+        topKNN.clear();
+      }
+      if (reporter !=  null)
+        reporter.progress();
+
+    } catch (RuntimeException e) {
+      e.printStackTrace();
+    }
+    long t2 = System.currentTimeMillis();
+    LOG.info("Finished plane sweep in "+(t2-t1)+" millis and found "+count+" pairs");
+
+  }
+
+  public static <S1 extends Shape, S2 extends Shape> void EDRJoin_planeSweep(List<S1> R, List<S2> S,
+                                                                              double epsilon, ResultCollector2<S1, S2> output, Reporter reporter) {
+
+    int count = 0;
+
+    Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        Rectangle rect_o1, rect_o2;
+        rect_o1 = o1.getMBR();
+        rect_o2 = o2.getMBR();
+        if (rect_o1.x1 == rect_o2.x1)
+          return 0;
+        return rect_o1.x1 < rect_o2.x1 ? -1 : 1;
+      }
+    };
+
+    long t1 = System.currentTimeMillis();
+    LOG.info("Joining lists "+ R.size()+" with "+S.size());
+
+    //Collections.sort(R, comparator);
+    Collections.sort(S, comparator);
+
+
+    int i,j;
+
+    try {
+      S1 r;
+      Rectangle rect_r;
+      S2 s;
+      Rectangle rect_s;
+
+      for(i=0;i<R.size();i++){
+
+        r = R.get(i);
+        rect_r = r.getMBR();
+
+        if(S.size()>0) {
+          int left = 0;
+          int right = S.size() - 1;
+          int m = 0;
+
+          while (left <= right) {
+            m = (left + right) / 2;
+            //    	  If Am = T, the search is done; return m.
+            //    			  If Am < T, set L to m + 1 and go to step 2.
+            //    			  If Am > T, set R to m - 1 and go to step 2.
+            s = S.get(m);
+            rect_s = s.getMBR();
+
+            if (rect_s.x1 == rect_r.x1) {
+              break;
+            } else {
+              if (rect_s.x1 < rect_r.x1) {
+                left = m + 1;
+              } else {
+                right = m - 1;
+              }
+            }
+
+          }
+
+          int pl, pr;
+
+          if (m < 0) {
+            m = 0;
+            pl = m;
+            pr = m + 1;
+          } else if (m > S.size() - 1) {
+            m = S.size() - 1;
+            pl = m - 1;
+            pr = m;
+          } else {
+            pl = m;
+            pr = m + 1;
+          }
+
+          double gdmax = epsilon;
+
+          boolean flagPL = pl < 0;
+          boolean flagPR = pr > S.size() - 1;
+
+          while (!flagPL || !flagPR) {
+            if (!flagPL) {
+              s = S.get(pl);
+              rect_s = s.getMBR();
+
+              double dx = Math.abs(rect_r.x1 - rect_s.x1);
+              if (dx > gdmax ) {
+                flagPL = true;
+                continue;
+              }
+
+              double dy = Math.abs(rect_r.y1 - rect_s.y1);
+              if (dy > gdmax ) {
+                pl--;
+                flagPL = pl < 0;
+                continue;
+              }
+
+              double dist = Math.sqrt(dx*dx+dy*dy);//rect_r.getMinDistance(rect_s);
+              if(dist <= gdmax ){
+                output.collect(r,s);
+              }
+
+              pl--;
+              flagPL = pl < 0;
+            }
+
+            if (!flagPR) {
+              s = S.get(pr);
+              rect_s = s.getMBR();
+              double dx = Math.abs(rect_r.x1 - rect_s.x1);
+
+              if (dx > gdmax) {
+                flagPR = true;
+                continue;
+              }
+
+              double dy = Math.abs(rect_r.y1 - rect_s.y1);
+              if (dy > gdmax) {
+                pr++;
+                flagPR = pr > S.size() - 1;
+                continue;
+              }
+
+              double dist = Math.sqrt(dx*dx+dy*dy);//rect_r.getMinDistance(rect_s);
+              if(dist <= gdmax){
+                output.collect(r,s);
+              }
+
+              pr++;
+              flagPR = pr > S.size() - 1;
+            }
+
+          }
+
+        }
+      }
+      if (reporter !=  null)
+        reporter.progress();
+
+    } catch (RuntimeException e) {
+      e.printStackTrace();
+    }
+    long t2 = System.currentTimeMillis();
+    LOG.info("Finished plane sweep in "+(t2-t1)+" millis and found "+count+" pairs");
+
+  }
+
+  public static<S1 extends Shape, S2 extends Shape> int SpatialEpsilonJoin_planeSweep(final S1[] R, final S2[] S, final double epsilon, final ResultCollector2<S1, S2> output,
+                                                                                      final Reporter reporter) {
+    int count = 0;
+
+    final Comparator<Shape> comparator = new Comparator<Shape>() {
+      @Override
+      public int compare(Shape o1, Shape o2) {
+        if (o1.getMBR().x1 == o2.getMBR().x1)
+          return 0;
+        return o1.getMBR().x1 < o2.getMBR().x1 ? -1 : 1;
+      }
+    };
+
+    long t1 = System.currentTimeMillis();
+    LOG.info("Joining arrays "+ R.length+" with "+S.length);
+    Arrays.sort(R, comparator);
+    Arrays.sort(S, comparator);
+
+    int i = 0, j = 0;
+
+    try {
+      while (i < R.length && j < S.length) {
+        S1 r;
+        S2 s;
+        if (comparator.compare(R[i], S[j]) < 0) {
+          r = R[i];
+          int jj = j;
+          Rectangle rectR = r.getMBR();
+          while (jj < S.length) {
+
+            s = S[jj];
+
+            Rectangle rectS = s.getMBR();
+
+            double dx = Math.abs(rectR.x1-rectS.x1);
+
+            if(dx>epsilon){
+              break;
+            }
+
+            double dy = Math.abs(rectR.y1-rectS.y1);
+
+            if(dy>epsilon){
+              jj++;
+              continue;
+            }
+
+            double distance = rectR.getMinDistance(rectS);
+
+            if (distance<=epsilon) {
+              if (output != null)
+                output.collect(r, s);
+              count++;
+            }
+            jj++;
+            if (reporter != null)
+              reporter.progress();
+          }
+          i++;
+        } else {
+          s = S[j];
+
+          Rectangle rectS = s.getMBR();
+
+          int ii = i;
+
+          while (ii < R.length) {
+            r = R[ii];
+
+            Rectangle rectR = r.getMBR();
+
+            double dx = Math.abs(rectR.x1-rectS.x1);
+
+            if(dx>epsilon){
+              break;
+            }
+
+            double dy = Math.abs(rectR.y1-rectS.y1);
+
+            if(dy>epsilon){
+              ii++;
+              continue;
+            }
+
+            double distance = rectR.getMinDistance(rectS);
+
+            if (distance<=epsilon) {
+              if (output != null)
+                output.collect(r, s);
+              count++;
+            }
+            ii++;
+            if (reporter != null)
+              reporter.progress();
+          }
+          j++;
+        }
+        if (reporter != null)
+          reporter.progress();
+      }
+    } catch (RuntimeException e) {
+      e.printStackTrace();
+    }
+    long t2 = System.currentTimeMillis();
+    LOG.info("Finished plane sweep in "+(t2-t1)+" millis and found "+count+" pairs");
+    return count;
   }
 
 }
