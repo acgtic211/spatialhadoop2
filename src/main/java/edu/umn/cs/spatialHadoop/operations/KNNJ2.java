@@ -12,7 +12,6 @@ import edu.umn.cs.spatialHadoop.OperationsParams;
 import edu.umn.cs.spatialHadoop.core.*;
 import edu.umn.cs.spatialHadoop.indexing.GlobalIndex;
 import edu.umn.cs.spatialHadoop.indexing.Partition;
-import edu.umn.cs.spatialHadoop.indexing.QuadTreePartitioner;
 import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
 import edu.umn.cs.spatialHadoop.mapred.ShapeLineInputFormat;
 import edu.umn.cs.spatialHadoop.mapred.TextOutputFormat;
@@ -22,7 +21,10 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.*;
+import org.apache.hadoop.io.ArrayWritable;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.*;
 import org.apache.hadoop.mapred.Counters.Counter;
 import org.apache.hadoop.mapred.lib.MultipleOutputs;
@@ -41,22 +43,22 @@ import java.util.*;
  *
  * @author eldawy
  */
-public class KNNJ {
+public class KNNJ2 {
 
     /**
      * Class logger
      */
-    private static final Log LOG = LogFactory.getLog(KNNJ.class);
-    private static final String PartitionGrid = "KNNJ.PartitionGrid";
+    private static final Log LOG = LogFactory.getLog(KNNJ2.class);
+    private static final String PartitionGrid = "KNNJ2.PartitionGrid";
     public static final String PartitioiningFactor = "partition-grid-factor";
-    private static final String InactiveMode = "KNNJ.InactiveMode";
+    private static final String InactiveMode = "KNNJ2.InactiveMode";
     private static final String isFilterOnlyMode = "DJ.FilterOnlyMode";
     private static final String JoiningThresholdPerOnce = "DJ.JoiningThresholdPerOnce";
     public static boolean isReduceInactive = false;
     public static boolean isSpatialJoinOutputRequired = true;
     public static boolean isFilterOnly = false;
-    public static int joiningThresholdPerOnce = 1000000;
-    private static int SUBCELL_ID = 1000000000;
+    public static int joiningThresholdPerOnce = 50000;
+    private static int SUBCELL_ID = 10000;
 
     //Divide el espacio en base a las celdas del segund conjunto
 
@@ -108,140 +110,13 @@ public class KNNJ {
      *
      * @author Ahmed Eldawy
      */
-    public static class KNNJMap1 extends MapReduceBase implements Mapper<Rectangle, Text, Partition, Text> {
-        private Shape shape;
-        private Text outputValue = new Text();
-        private PartitionInfo gridInfo;
-        Random rand;
-
-        @Override
-        public void configure(JobConf job) {
-            super.configure(job);
-            // Retrieve grid to use for partitioning
-            gridInfo = (PartitionInfo) OperationsParams.getShape(job, PartitionGrid);
-            // Create a stock shape for deserializing lines
-            shape = SpatialSite.createStockShape(job);
-            // Get input paths to determine file index for every record
-
-            rand = new Random();
-
-        }
-
-        @Override
-        public void map(Rectangle cellMbr, Text value, OutputCollector<Partition, Text> output,
-                        Reporter reporter) throws IOException {
-
-            if(rand.nextFloat()>0.02){
-                return;
-            }
-
-            Text tempText = new Text(value);
-            outputValue = value;
-            shape.fromText(tempText);
-            Rectangle shape_mbr = shape.getMBR();
-            // Do a reference point technique to avoid processing the same
-            // record twice
-            if (!cellMbr.isValid() || cellMbr.contains(shape_mbr.x1, shape_mbr.y1)) {
-
-                List<Partition> cells = gridInfo.getOverlappingCells(shape_mbr);
-
-                for (Partition part : cells) {
-
-                    output.collect(part, outputValue);
-                }
-            }
-        }
-    }
-
-    // Recrea las listas de puntos R y S y calcula KNNJ (RxS)
-    public static class KNNJReduce1<S extends Shape> extends MapReduceBase
-        implements Reducer<Partition, Text, IntWritable, QuadTreePartitioner> {
-        /**
-         * Class logger
-         */
-        private static final Log KNNJReduceLOG = LogFactory.getLog(KNNJReduce1.class);
-
-        /**
-         * Number of files in the input
-         */
-        private int inputFileCount;
-
-        /**
-         * List of cells used by the reducer
-         */
-        private int shapesThresholdPerOnce;
-
-        private S shape;
-        private int k;
-        IntWritable aux;
-
-
-        @Override
-        public void configure(JobConf job) {
-            super.configure(job);
-            shape = (S) SpatialSite.createStockShape(job);
-            shapesThresholdPerOnce = OperationsParams.getJoiningThresholdPerOnce(job, JoiningThresholdPerOnce);
-            inputFileCount = FileInputFormat.getInputPaths(job).length;
-            k = job.getInt("k", 1);
-            KNNJReduceLOG.info("configured the reduced task");
-            aux = new IntWritable();
-
-        }
-
-        @Override
-        public void reduce(Partition cellId, Iterator<Text> values,
-                           final OutputCollector<IntWritable, QuadTreePartitioner> output, Reporter reporter) throws IOException {
-
-            LOG.info("Start reduce() logic now !!!");
-            long t1 = System.currentTimeMillis();
-
-            // Partition retrieved shapes (values) into lists for each file
-            Vector<S> shapes  = new Vector<S>();
-
-
-            while (values.hasNext()) {
-
-                Text t = values.next();
-                S s = (S) shape.clone();
-                s.fromText(t);
-                shapes.add(s);
-
-            }
-            Point finalShapes[] = new Point[shapes.size()];
-            shapes.toArray(finalShapes);
-            QuadTreePartitioner qt = new QuadTreePartitioner();
-            qt.createFromPoints(cellId,finalShapes,(int)Math.floor(shapesThresholdPerOnce*0.02));
-
-            aux.set(cellId.cellId);
-            output.collect(aux,qt);
-
-
-            long t2 = System.currentTimeMillis();
-            LOG.info("Reducer finished in: " + (t2 - t1) + " millis");
-
-        }
-
-        @Override
-        public void close() throws IOException {
-            super.close();
-        }
-    }
-
-
-    /**
-     * Separa los archivos de entrada en 2 listas asociandoles la cell id adecuada
-     *
-     * @author Ahmed Eldawy
-     */
-    public static class KNNJMap2 extends MapReduceBase implements Mapper<Rectangle, Text, LongWritable, IndexedText> {
+    public static class KNNJMap2 extends MapReduceBase implements Mapper<Rectangle, Text, IntWritable, IndexedText> {
         private Shape shape;
         private IndexedText outputValue = new IndexedText();
         private PartitionInfo gridInfo;
-        private LongWritable cellId = new LongWritable();
+        private IntWritable cellId = new IntWritable();
         private Path[] inputFiles;
         private InputSplit currentSplit;
-        private Map<String, QuadTreePartitioner> qtrees;
-
 
         @Override
         public void configure(JobConf job) {
@@ -252,22 +127,10 @@ public class KNNJ {
             shape = SpatialSite.createStockShape(job);
             // Get input paths to determine file index for every record
             inputFiles = FileInputFormat.getInputPaths(job);
-
-            String sizesAux = job.get("QTREES", null);
-            if(sizesAux!=null){
-                Map<String,String> aux = new HashMap<String, String>();
-                TextSerializerHelper.consumeMap(new Text(sizesAux),aux);
-                qtrees = new HashMap<String, QuadTreePartitioner>();
-                for(String key : aux.keySet()) {
-                    QuadTreePartitioner qp = new QuadTreePartitioner();
-                    qp.fromText(new Text(aux.get(key).getBytes()));
-                    qtrees.put(key,qp);
-                }
-            }
         }
 
         @Override
-        public void map(Rectangle cellMbr, Text value, final OutputCollector<LongWritable, IndexedText> output,
+        public void map(Rectangle cellMbr, Text value, OutputCollector<IntWritable, IndexedText> output,
                         Reporter reporter) throws IOException {
             if (reporter.getInputSplit() != currentSplit) {
                 FileSplit fsplit = (FileSplit) reporter.getInputSplit();
@@ -287,60 +150,24 @@ public class KNNJ {
             // record twice
             if (!cellMbr.isValid() || cellMbr.contains(shape_mbr.x1, shape_mbr.y1)) {
 
-                List<Partition> cells = gridInfo.getOverlappingCells(shape_mbr);
-
+                List<Partition> cells = gridInfo.getOverlappingSubCells(shape_mbr,joiningThresholdPerOnce);
                 if(cells.size()==0) {
-                    cells = new ArrayList<Partition>();
-                    Partition part = gridInfo.getNearestCell(shape_mbr);
-                    QuadTreePartitioner qp = qtrees.get(part.cellId + "");
-                    double minDistance = Double.MAX_VALUE;
-                    CellInfo minPart = null;
-                    for (int n = 0; n < qp.getPartitionCount(); n++) {
-                        CellInfo aux = qp.getPartitionAt(n);
-                        double auxDistance = aux.getMinDistance(shape_mbr);
-                        if (auxDistance < minDistance) {
-                            minDistance = auxDistance;
-                            minPart = aux;
-                        }
-                    }
-
-                    try {
-                        long finalCellId = ((long)(part.cellId) * SUBCELL_ID) + minPart.cellId;
-                        cellId.set(finalCellId);
-                        output.collect(cellId, outputValue);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-
+                    cellId.set(gridInfo.getNearestCell(shape_mbr,joiningThresholdPerOnce).cellId);
+                    output.collect(cellId, outputValue);
+                    return;
                 }
+                for (Partition part : cells) {
 
-                for (final Partition part : cells) {
-
-                    QuadTreePartitioner qp = qtrees.get(part.cellId+"");
-                    qp.overlapPartitions(shape_mbr,new ResultCollector<Integer>() {
-
-                        @Override
-                        public void collect(Integer x) {
-                            long finalCellId = ((long)(part.cellId) * SUBCELL_ID) + x.longValue();
-                            cellId.set(finalCellId);
-
-                            try {
-                                output.collect(cellId, outputValue);
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    });
-
+                    cellId.set(part.cellId);
+                    output.collect(cellId, outputValue);
                 }
-
             }
         }
     }
 
-    // Recrea las listas de puntos R y S y calcula KNNJ (RxS)
+    // Recrea las listas de puntos R y S y calcula KNNJ2 (RxS)
     public static class KNNJReduce2<S extends Shape> extends MapReduceBase
-            implements Reducer<LongWritable, IndexedText, S, ArrayWritable> {
+        implements Reducer<IntWritable, IndexedText, S, ArrayWritable> {
         /**
          * Class logger
          */
@@ -358,7 +185,7 @@ public class KNNJ {
 
         private S shape;
         private int k;
-        LongWritable aux;
+        IntWritable aux;
         MultipleOutputs mos;
 
         @Override
@@ -369,13 +196,13 @@ public class KNNJ {
             inputFileCount = FileInputFormat.getInputPaths(job).length;
             k = job.getInt("k", 1);
             KNNJReduceLOG.info("configured the reduced task");
-            aux = new LongWritable();
+            aux = new IntWritable();
             mos = new MultipleOutputs(job);
 
         }
 
         @Override
-        public void reduce(LongWritable cellId, Iterator<IndexedText> values,
+        public void reduce(IntWritable cellId, Iterator<IndexedText> values,
                            final OutputCollector<S, ArrayWritable> output, Reporter reporter) throws IOException {
 
             LOG.info("Start reduce() logic now !!!");
@@ -402,19 +229,19 @@ public class KNNJ {
                 KNNJReduceLOG.info("Joining (" + shapeLists[0].size() + " X " + shapeLists[1].size() + ")...");
 
                 SpatialAlgorithms.KNNJoin_planeSweep(shapeLists[0], shapeLists[1], cellId.get(), k,
-                        new ResultCollector2<S, ArrayWritable>() {
+                    new ResultCollector2<S, ArrayWritable>() {
 
-                            @Override
-                            public void collect(S x, ArrayWritable y) {
-                                try {
+                        @Override
+                        public void collect(S x, ArrayWritable y) {
+                            try {
 
-                                    output.collect(x, y);
+                                output.collect(x, y);
 
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
+                            } catch (IOException e) {
+                                e.printStackTrace();
                             }
-                        }, reporter);
+                        }
+                    }, reporter);
 
                 //shapeLists[1].clear();
             }
@@ -473,9 +300,7 @@ public class KNNJ {
 
         @Override
         public void fromText(Text text) {
-            LOG.info(text.toString());
             super.fromText(text);
-            LOG.info(text.toString());
             if (text.getLength() > 0) {
                 // Remove the first comma
                 text.set(text.getBytes(), 1, text.getLength() - 1);
@@ -483,9 +308,7 @@ public class KNNJ {
                 shapes = new ArrayList<Partition>();
                 Partition partAux = new Partition();
                 for(int n = 0; n < shapesLength; n++){
-                    LOG.info(text.toString());
-                    partAux.fromQuadtreeText(text);
-                    LOG.info(text.toString());
+                    partAux.fromText(text);
                     shapes.add(partAux.clone());
                 }
 
@@ -536,29 +359,6 @@ public class KNNJ {
         }
 
 
-        public Partition getPartition(int cellId) {
-            for(Partition partAux : shapes){
-                if(partAux.cellId == cellId){
-                    return partAux;
-                }
-            }
-            return null;
-        }
-
-        public Partition getNearestCell(Rectangle shapeMBR) {
-            double minDistance = Double.MAX_VALUE;
-            Partition thePart = null;
-            for(Partition partAux : shapes){
-                if(partAux.getMinDistance(shapeMBR)<minDistance) {
-                    thePart = partAux;
-                    minDistance = partAux.getMinDistance(shapeMBR);
-                }
-            }
-
-            return thePart;
-
-        }
-
         public List<Partition> getOverlappingSubCells(Rectangle shapeMBR, int limit) {
             List<Partition> overlapped = new ArrayList<Partition>();
             for(Partition partAux : shapes){
@@ -602,20 +402,17 @@ public class KNNJ {
      *
      * @author Ahmed Eldawy
      */
-    public static class KNNJMap3<S extends Shape> extends MapReduceBase implements Mapper<Rectangle, Text, LongWritable, IndexedText> {
+    public static class KNNJMap3<S extends Shape> extends MapReduceBase implements Mapper<Rectangle, Text, IntWritable, IndexedText> {
         private S shape;
         private IndexedText outputValue = new IndexedText();
         private PartitionInfo gridInfo;
-        private LongWritable cellId = new LongWritable();
+        private IntWritable cellId = new IntWritable();
         private Path[] inputFiles;
         private InputSplit currentSplit;
         private int k;
         private Text tempText = new Text();
         private Text tempShapeText = new Text();
         private Map<String,String> sizes = null;
-        private int elementCount = 0;
-        private double minMaxDistance = 0;
-        private Map<String, QuadTreePartitioner> qtrees;
 
         @Override
         public void configure(JobConf job) {
@@ -633,23 +430,11 @@ public class KNNJ {
                 TextSerializerHelper.consumeMap(new Text(sizesAux),sizes);
             }
 
-            sizesAux = job.get("QTREES", null);
-            if(sizesAux!=null){
-                Map<String,String> aux = new HashMap<String, String>();
-                TextSerializerHelper.consumeMap(new Text(sizesAux),aux);
-                qtrees = new HashMap<String, QuadTreePartitioner>();
-                for(String key : aux.keySet()) {
-                    QuadTreePartitioner qp = new QuadTreePartitioner();
-                    qp.fromText(new Text(aux.get(key).getBytes()));
-                    qtrees.put(key,qp);
-                }
-            }
-
 
         }
 
         @Override
-        public void map(Rectangle cellMbr, Text value, final OutputCollector<LongWritable, IndexedText> output,
+        public void map(Rectangle cellMbr, Text value, OutputCollector<IntWritable, IndexedText> output,
                         Reporter reporter) throws IOException {
             if (reporter.getInputSplit() != currentSplit) {
                 FileSplit fsplit = (FileSplit) reporter.getInputSplit();
@@ -675,7 +460,7 @@ public class KNNJ {
                 //Remove tab
                 tempText.set(tempText.getBytes(), 1, tempText.getLength() - 1);
 
-                final long auxCellId = TextSerializerHelper.consumeLong(tempText, ',');
+                int auxCellId = TextSerializerHelper.consumeInt(tempText, ',');
                 int newSize = TextSerializerHelper.consumeInt(tempText, ',');
                 double maxSize = TextSerializerHelper.consumeDouble(tempText, ',');
 
@@ -697,21 +482,15 @@ public class KNNJ {
 
                     double radius;
                     double radiusAux = 0;
-                    minMaxDistance = Double.MAX_VALUE;
+                    double maxDistance = 0;
 
                     if(newSize>0){
                         radius = maxSize;
                     }else{
-                        /*Partition aux = gridInfo.getPartition((int)Math.floor((double)auxCellId/SUBCELL_ID));
-                        radius = aux.getMinDistance(shapeMBR);//getAverageCellWidth()/20;
-                        if(radius==0) radius = aux.getMaxDistance(shapeMBR);*/
-                        QuadTreePartitioner qp = qtrees.get((long)Math.floor(((double)auxCellId)/((double)SUBCELL_ID))+"");
-                        CellInfo aux = qp.getPartition((int)(auxCellId%SUBCELL_ID));
-                        radius = aux.getMinDistance(shapeMBR);
-                        if(radius==0) radius = aux.getMaxDistance(shapeMBR);
+                        radius = gridInfo.getAverageCellWidth()/2;
                     }
 
-                    elementCount = 0;
+                    int elementCount = 0;
 
                     //LOG.info("radius "+radius );
                     //LOG.info("size "+ topKNN.heap.size() );
@@ -726,35 +505,18 @@ public class KNNJ {
                         shapeMBR2.y2 += radiusAux;
                         elementCount = 0;
 
-                        List<Partition> cells = gridInfo.getOverlappingCells(shapeMBR2);
-                        for (final Partition part : cells) {
+                        List<Partition> cells = gridInfo.getOverlappingSubCells(shapeMBR2,joiningThresholdPerOnce);
+                        for (Partition part : cells) {
                             int overlappingCellId = part.cellId;
                             if (overlappingCellId == auxCellId)
                                 continue;
-
-                            QuadTreePartitioner qp = qtrees.get(part.cellId+"");
-                            qp.overlapPartitions(shapeMBR2,new ResultCollector<Integer>() {
-
-                                @Override
-                                public void collect(Integer x) {
-                                    long finalCellId = ((long)(part.cellId) * SUBCELL_ID) + x.longValue();
-                                    if (finalCellId == auxCellId)
-                                        return;
-                                    String count = sizes.get(finalCellId+"");
-                                    Integer thisCount = Integer.parseInt(count==null?"0":count);
-                                    elementCount += thisCount;
-                                    if(thisCount>=k)
-                                        minMaxDistance = part.getMaxDistance(shape.getMBR())<minMaxDistance?part.getMaxDistance(shape.getMBR()):minMaxDistance;
-
-                                }
-                            });
-
-
-
+                            String count = sizes.get(part.cellId+"");
+                            elementCount += Integer.parseInt(count==null?"0":count);
+                            maxDistance = part.getMaxDistance(shape.getMBR())>maxDistance?part.getMaxDistance(shape.getMBR()):maxDistance;
                         }
 
                         if(shapeMBR2.contains(gridInfo)){
-                            minMaxDistance = radiusAux;
+                            maxDistance = radiusAux;
                             break;
                         }
                     }
@@ -763,7 +525,7 @@ public class KNNJ {
                         radiusAux = radius;
                     }
                     else{
-                        radiusAux = minMaxDistance;
+                        radiusAux = maxDistance;
                     }
 
 
@@ -772,34 +534,17 @@ public class KNNJ {
                     shapeMBR.x2 += radiusAux;
                     shapeMBR.y2 += radiusAux;
 
-                    List<Partition> cells = gridInfo.getOverlappingCells(shapeMBR);
-
-
-                    for (final Partition part : cells) {
-
-                        QuadTreePartitioner qp = qtrees.get(part.cellId+"");
-                        qp.overlapPartitions(shapeMBR,new ResultCollector<Integer>() {
-
-                            @Override
-                            public void collect(Integer x) {
-                                long finalCellId = ((long)(part.cellId) * SUBCELL_ID) + x.longValue();
-                                cellId.set(finalCellId);
-                                if (finalCellId == auxCellId)
-                                    return;
-                                if(sizes.get(finalCellId+"")==null)
-                                    return;
-
-                                try {
-                                    output.collect(cellId, outputValue);
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        });
-
-
-
+                    List<Partition> cells = gridInfo.getOverlappingSubCells(shapeMBR,joiningThresholdPerOnce);
+                    for (Partition part : cells) {
+                        int overlappingCellId = part.cellId;
+                        if (overlappingCellId == auxCellId)
+                            continue;
+                        if(sizes.get(part.cellId+"")==null)
+                            continue;
+                        cellId.set(overlappingCellId);
+                        output.collect(cellId, outputValue);
                     }
+
 
                     //cellId.set(auxCellId);
                     //output.collect(cellId, outputValue);
@@ -817,25 +562,10 @@ public class KNNJ {
                     if (shapeMBR == null)
                         return;
 
-                    List<Partition> cells = gridInfo.getOverlappingCells(shapeMBR);
-                    for (final Partition part : cells) {
-
-                        QuadTreePartitioner qp = qtrees.get(part.cellId+"");
-                        qp.overlapPartitions(shapeMBR,new ResultCollector<Integer>() {
-
-                            @Override
-                            public void collect(Integer x) {
-                                long finalCellId = ((long)(part.cellId) * SUBCELL_ID) + x.longValue();
-                                cellId.set(finalCellId);
-
-                                try {
-                                    output.collect(cellId, outputValue);
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        });
-
+                    List<Partition> cells = gridInfo.getOverlappingSubCells(shapeMBR,joiningThresholdPerOnce);
+                    for (Partition part : cells) {
+                        cellId.set(part.cellId);
+                        output.collect(cellId, outputValue);
                     }
 
                 }
@@ -844,7 +574,7 @@ public class KNNJ {
     }
 
     public static class KNNJReduce3<S extends Shape> extends MapReduceBase
-            implements Reducer<LongWritable, IndexedText, S, ArrayWritable> {
+        implements Reducer<IntWritable, IndexedText, S, ArrayWritable> {
         /**
          * Class logger
          */
@@ -874,7 +604,7 @@ public class KNNJ {
         }
 
         @Override
-        public void reduce(LongWritable cellId, Iterator<IndexedText> values,
+        public void reduce(IntWritable cellId, Iterator<IndexedText> values,
                            final OutputCollector<S, ArrayWritable> output, Reporter reporter) throws IOException {
 
             LOG.info("Start reduce() logic now !!!");
@@ -912,19 +642,19 @@ public class KNNJ {
                 if(shapeLists[0].isEmpty())
                     break;
                 SpatialAlgorithms.KNNJoin_planeSweep(shapeLists[0], maxRadius, shapeLists[1], cellId.get(), k,
-                        new ResultCollector2<S, ArrayWritable>() {
+                    new ResultCollector2<S, ArrayWritable>() {
 
-                            @Override
-                            public void collect(S x, ArrayWritable y) {
-                                try {
+                        @Override
+                        public void collect(S x, ArrayWritable y) {
+                            try {
 
-                                    output.collect(x, y);
+                                output.collect(x, y);
 
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
+                            } catch (IOException e) {
+                                e.printStackTrace();
                             }
-                        }, reporter);
+                        }
+                    }, reporter);
 
                 shapeLists[1].clear();
             }
@@ -975,7 +705,7 @@ public class KNNJ {
     }
 
     public static class KNNJReduce4 extends MapReduceBase
-            implements Reducer<Shape, SpatialAlgorithms.TOPKNN<Shape>, Shape, SpatialAlgorithms.TOPKNN<Shape>> {
+        implements Reducer<Shape, SpatialAlgorithms.TOPKNN<Shape>, Shape, SpatialAlgorithms.TOPKNN<Shape>> {
         /**
          * Class logger
          */
@@ -1039,13 +769,12 @@ public class KNNJ {
 
     }
 
-    public static <S extends Shape> long KNNJ(Path[] inFiles, Path userOutputPath, OperationsParams params)
-            throws IOException, InterruptedException {
-        JobConf job = new JobConf(params, KNNJ.class);
+    public static <S extends Shape> long KNNJ2(Path[] inFiles, Path userOutputPath, OperationsParams params)
+        throws IOException, InterruptedException {
+        JobConf job = new JobConf(params, KNNJ2.class);
 
-        LOG.info("KNNJ journey starts ....");
+        LOG.info("KNNJ2 journey starts ....");
         long t1 = System.currentTimeMillis();
-
         FileSystem inFs = inFiles[0].getFileSystem(job);
         Path outputPath = userOutputPath;
         if (outputPath == null) {
@@ -1058,9 +787,13 @@ public class KNNJ {
 
 
         ClusterStatus clusterStatus = new JobClient(job).getClusterStatus();
-        job.setJobName("KNNJ 1 " + job.getInt("k", 1));
+        job.setJobName("KNNJ 2 " + job.getInt("k", 1));
+        job.setMapperClass(KNNJMap2.class);
+        job.setMapOutputKeyClass(IntWritable.class);
+        job.setMapOutputValueClass(IndexedText.class);
         job.setNumMapTasks(5 * Math.max(1, clusterStatus.getMaxMapTasks()));
 
+        job.setReducerClass(KNNJReduce2.class);
         job.setNumReduceTasks(Math.max(1, clusterStatus.getMaxReduceTasks()));
 
         job.setInputFormat(ShapeLineInputFormat.class);
@@ -1084,7 +817,7 @@ public class KNNJ {
         total_size += total_size * job.getFloat(SpatialSite.INDEXING_OVERHEAD, 0.2f);
         int KNNJPartitioningGridFactor = params.getInt(PartitioiningFactor, 20);
         int num_cells = (int) Math.max(1,
-                total_size * KNNJPartitioningGridFactor / outFs.getDefaultBlockSize(outputPath));
+            total_size * KNNJPartitioningGridFactor / outFs.getDefaultBlockSize(outputPath));
         LOG.info("Number of cells is configured to be " + num_cells);
 
         OperationsParams.setInactiveModeFlag(job, InactiveMode, isReduceInactive);
@@ -1108,79 +841,14 @@ public class KNNJ {
             LOG.info(auxR.cellId+":"+auxR.recordCount);
         }
 
-        Text test = new Text();
-        partInfo.toText(test);
-        PartitionInfo partInfo2 = new PartitionInfo();
-        partInfo2.fromText(test);
-
         OperationsParams.setShape(job, PartitionGrid, partInfo);
 
         TextInputFormat inputFormat = new TextInputFormat();
         inputFormat.configure(job);
         TextInputFormat.setInputPaths(job, inFiles);
 
-        job.setMapperClass(KNNJMap1.class);
-        job.setMapOutputKeyClass(Partition.class);
-        job.setMapOutputValueClass(Text.class);
-
-        job.setReducerClass(KNNJReduce1.class);
-        job.setNumReduceTasks(Math.max(1, clusterStatus.getMaxReduceTasks()));
-
-        job.setInputFormat(ShapeLineInputFormat.class);
-        job.setOutputFormat(TextOutputFormat.class);
-
-        ShapeLineInputFormat.setInputPaths(job, inFiles);
-
-        do {
-            outputPath = new Path(userOutputPath.getName() + ".KNNJ1_" + (int) (Math.random() * 1000000));
-        } while (outFs.exists(outputPath));
-
-        TextOutputFormat.setOutputPath(job, outputPath);
-
-        RunningJob runningJob = JobClient.runJob(job);
-        runningJob.waitForCompletion();
-
-        Map<String,String> qtrees = new HashMap<String,String>();
-
-        FileStatus[] stats = outFs.listStatus(outputPath);
-        for (int i = 0; i < stats.length; ++i) {
-            String fileName = outputPath.toString() + "/"
-                + stats[i].getPath().getName();
-            LOG.info(fileName);
-            if (stats[i].getPath().getName().contains("part")) {
-                // read in cell stat info
-                BufferedInputStream is = new BufferedInputStream(outFs.open(new Path(fileName)));
-                BufferedReader br = new BufferedReader(new InputStreamReader(is));
-
-                // parse data
-                for (String line = br.readLine(); line != null; line = br
-                    .readLine()) {
-                    LOG.info(line);
-                    String[] data = line.split("\t");
-                    qtrees.put(data[0],data[1]);
-                }
-
-                outFs.delete(stats[i].getPath(), true);
-
-            }
-
-        }
-
-        outFs.deleteOnExit(outputPath);
-
-        job.set("QTREES",TextSerializerHelper.serializeMap(new Text(),qtrees).toString());
-        long t2 = System.currentTimeMillis();
-
-        //STEP 2
-        job.setJobName("KNNJ 2 " + job.getInt("k", 1));
-
-
-        //if(true) throw new InterruptedException("we") ;
-
-        TextInputFormat.setInputPaths(job, inFiles);
-
         job.setMapperClass(KNNJMap2.class);
-        job.setMapOutputKeyClass(LongWritable.class);
+        job.setMapOutputKeyClass(IntWritable.class);
         job.setMapOutputValueClass(IndexedText.class);
 
         job.setReducerClass(KNNJReduce2.class);
@@ -1189,7 +857,7 @@ public class KNNJ {
         job.setInputFormat(ShapeLineInputFormat.class);
         job.setOutputFormat(TextOutputFormat.class);
         MultipleOutputs.addNamedOutput(job, "test", TextOutputFormat.class,
-            LongWritable.class, IntWritable.class);
+            IntWritable.class, IntWritable.class);
 
         ShapeLineInputFormat.setInputPaths(job, inFiles);
 
@@ -1199,14 +867,14 @@ public class KNNJ {
 
         TextOutputFormat.setOutputPath(job, outputPath);
 
-        runningJob = JobClient.runJob(job);
+        RunningJob runningJob = JobClient.runJob(job);
         runningJob.waitForCompletion();
 
         outFs.deleteOnExit(outputPath);
 
         Map<String,String> sizes = new HashMap<String,String>();
 
-        stats = outFs.listStatus(outputPath);
+        FileStatus[] stats = outFs.listStatus(outputPath);
         for (int i = 0; i < stats.length; ++i) {
             String fileName = outputPath.toString() + "/"
                 + stats[i].getPath().getName();
@@ -1231,15 +899,15 @@ public class KNNJ {
         }
 
         job.set("SIZES",TextSerializerHelper.serializeMap(new Text(),sizes).toString());
-        job.set("QTREES",TextSerializerHelper.serializeMap(new Text(),qtrees).toString());
-
         //STEP 3
-        long t3 = System.currentTimeMillis();
+        long t2 = System.currentTimeMillis();
 
-        job.setJobName("KNNJ 3 " + job.getInt("k", 1));
+        job.setJobName("KNNJ2 2 " + job.getInt("k", 1));
+
+        //if(true) throw new InterruptedException("we");
 
         job.setMapperClass(KNNJMap3.class);
-        job.setMapOutputKeyClass(LongWritable.class);
+        job.setMapOutputKeyClass(IntWritable.class);
         job.setMapOutputValueClass(IndexedText.class);
 
         job.setReducerClass(KNNJReduce3.class);
@@ -1266,10 +934,10 @@ public class KNNJ {
         runningJob.waitForCompletion();
 
         outFs.deleteOnExit(outputPath);
-        long t4 = System.currentTimeMillis();
+        long t3 = System.currentTimeMillis();
 
         //if(true) throw new InterruptedException("we") ;
-        job.setJobName("KNNJ 4 " + job.getInt("k", 1));
+        job.setJobName("KNNJ2 3 " + job.getInt("k", 1));
 
         job.setMapperClass(KNNJMap4.class);
 
@@ -1296,11 +964,10 @@ public class KNNJ {
         runningJob = JobClient.runJob(job);
         runningJob.waitForCompletion();
 
-        long t5 = System.currentTimeMillis();
-        System.out.println("PRE STEP: " + (t2 - t1) + " millis");
-        System.out.println("STEP 1: " + (t3 - t2) + " millis");
-        System.out.println("STEP 2: " + (t4 - t3) + " millis");
-        System.out.println("STEP 3: " + (t5 - t4) + " millis");
+        long t4 = System.currentTimeMillis();
+        System.out.println("STEP 1: " + (t2 - t1) + " millis");
+        System.out.println("STEP 2: " + (t3 - t2) + " millis");
+        System.out.println("STEP 3: " + (t4 - t3) + " millis");
 
 
         Counters counters = runningJob.getCounters();
@@ -1375,7 +1042,7 @@ public class KNNJ {
         }
 
         long t1 = System.currentTimeMillis();
-        long resultSize = KNNJ(inputPaths, outputPath, params);
+        long resultSize = KNNJ2(inputPaths, outputPath, params);
         long t2 = System.currentTimeMillis();
         System.out.println("Total time: " + (t2 - t1) + " millis");
         System.out.println("Result size: " + resultSize);
