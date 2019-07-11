@@ -19,6 +19,7 @@ import org.apache.hadoop.io.Text;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Vector;
 
 public final class TextSerializerHelper {
   /**
@@ -349,7 +350,7 @@ public final class TextSerializerHelper {
     return l;
   }
 
-  private static final byte[] Separators = {'[', '#', ',', ']'};
+  private static final byte[] Separators = {'[', '#', '|', ']'};
   private static final int MapStart = 0, KeyValueSeparator = 1,
       FieldSeparator = 2, MapEnd = 3;
 
@@ -366,7 +367,11 @@ public final class TextSerializerHelper {
           i2++;
         String key = new String(tagsBytes, i1, i2 - i1);
         i1 = i2 + 1;
-
+        if(tagsBytes[i1] == Separators[FieldSeparator]){
+          tags.put(key, null);
+          i1++;
+          continue;
+        }
         i2 = i1 + 1;
         while (i2 < text.getLength() && tagsBytes[i2] != Separators[FieldSeparator] && tagsBytes[i2] != Separators[MapEnd])
           i2++;
@@ -381,6 +386,77 @@ public final class TextSerializerHelper {
     }
   }
 
+  public static void consumeMapVector(Text text, Map<String, Vector<Long>> tags) {
+    tags.clear();
+    if (text.getLength() > 0) {
+      byte[] tagsBytes = text.getBytes();
+      if (tagsBytes[0] != Separators[MapStart])
+        return;
+      int i1 = 1;
+      while (i1 < text.getLength() && tagsBytes[i1] != Separators[MapEnd]) {
+        int i2 = i1 + 1;
+        while (i2 < text.getLength() && tagsBytes[i2] != Separators[KeyValueSeparator])
+          i2++;
+        String key = new String(tagsBytes, i1, i2 - i1);
+        i1 = i2 + 1;
+        if(tagsBytes[i1] == Separators[FieldSeparator]){
+          tags.put(key, null);
+          i1++;
+          continue;
+        }
+        i2 = i1 + 1;
+        while (i2 < text.getLength() && tagsBytes[i2] != Separators[FieldSeparator] && tagsBytes[i2] != Separators[MapEnd])
+          i2++;
+        String valueToParse = new String(tagsBytes, i1, i2 - i1);
+        int pos = 1, end;
+        Vector<Long> value = new Vector<Long>();
+
+        while ((end = valueToParse.indexOf('-', pos)) >= 0) {
+          value.add(Long.parseLong(valueToParse.substring(pos, end)));
+          pos = end + 1;
+        }
+        tags.put(key, value);
+        i1 = i2;
+        if (i1 < text.getLength() && tagsBytes[i1] == Separators[FieldSeparator])
+          i1++;
+      }
+      if (i1 < text.getLength())
+        text.set(tagsBytes, i1, text.getLength() - i1);
+    }
+  }
+
+  public static void consumeMapDouble(Text text, Map<String, Double> tags) {
+    tags.clear();
+    if (text.getLength() > 0) {
+      byte[] tagsBytes = text.getBytes();
+      if (tagsBytes[0] != Separators[MapStart])
+        return;
+      int i1 = 1;
+      while (i1 < text.getLength() && tagsBytes[i1] != Separators[MapEnd]) {
+        int i2 = i1 + 1;
+        while (i2 < text.getLength() && tagsBytes[i2] != Separators[KeyValueSeparator])
+          i2++;
+        String key = new String(tagsBytes, i1, i2 - i1);
+        i1 = i2 + 1;
+        if(tagsBytes[i1] == Separators[FieldSeparator]){
+          tags.put(key, null);
+          i1++;
+          continue;
+        }
+        i2 = i1 + 1;
+        while (i2 < text.getLength() && tagsBytes[i2] != Separators[FieldSeparator] && tagsBytes[i2] != Separators[MapEnd])
+          i2++;
+        String valueToParse = new String(tagsBytes, i1, i2 - i1);
+        Double value = Double.parseDouble(valueToParse);
+        tags.put(key, value);
+        i1 = i2;
+        if (i1 < text.getLength() && tagsBytes[i1] == Separators[FieldSeparator])
+          i1++;
+      }
+      if (i1 < text.getLength())
+        text.set(tagsBytes, i1, text.getLength() - i1);
+    }
+  }
 
   public static Text serializeMap(Text text, Map<String, String> tags) {
     if (!tags.isEmpty()) {
@@ -633,4 +709,28 @@ public final class TextSerializerHelper {
     }
     return new String(hex);
   }
+
+  /**
+   * Consumes a String from the given text. Consuming means all
+   * characters read are removed from the given text.
+   * If separator is non-zero, a String is read and consumed up to the first
+   * occurrence of this separator. The separator is also consumed.
+   * @param text
+   * @param separator
+   * @return
+   */
+  public static String consumeString(Text text, char separator) {
+    int i = 0;
+    byte[] bytes = text.getBytes();
+    // Skip until the separator or end of text
+    while (i < text.getLength() && bytes[i] != separator)
+      i++;
+    String s = new String(bytes, 0, i);
+    if (i < text.getLength() && bytes[i] == separator)
+      i++;
+    System.arraycopy(bytes, i, bytes, 0, text.getLength() - i);
+    text.set(bytes, 0, text.getLength() - i);
+    return s;
+  }
+
 }
