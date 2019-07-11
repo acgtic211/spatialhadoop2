@@ -81,7 +81,7 @@ public class GridPartitioner extends Partitioner {
       int cols = (int)Math.round(Math.sqrt(numTiles));    
 
       this.numColumns = gridInfo.columns = Math.max(1, cols);
-      this.numRows = gridInfo.rows = (int) Math.ceil(numTiles / gridInfo.columns);
+      this.numRows = gridInfo.rows = Math.max(1, (int) Math.ceil(numTiles / gridInfo.columns));
       
       maxCellSize = 0;
       // TODO uncomment the following part to further breakdown big tiles
