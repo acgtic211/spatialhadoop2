@@ -35,6 +35,17 @@
       <unpack>true</unpack>
       <useTransitiveDependencies>false</useTransitiveDependencies>
     </dependencySet>
+    <dependencySet>
+      <outputDirectory>/</outputDirectory>
+      <useProjectAttachments>true</useProjectAttachments>
+      <includes>
+        <include>de.lmu.ifi.dbs.elki:*</include>
+        <include>it.unimi.dsi:fastutil</include>
+        <include>net.jafama:jafama</include>
+      </includes>
+      <unpack>true</unpack>
+      <useTransitiveDependencies>true</useTransitiveDependencies>
+    </dependencySet>
 
   </dependencySets>
 
