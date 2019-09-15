@@ -8,16 +8,16 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.indexing;
 
-import java.awt.Graphics;
+import edu.umn.cs.spatialHadoop.core.CellInfo;
+import edu.umn.cs.spatialHadoop.core.PivotInfo;
+import edu.umn.cs.spatialHadoop.core.Rectangle;
+import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
+import org.apache.hadoop.io.Text;
+
+import java.awt.*;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-
-import org.apache.hadoop.io.Text;
-
-import edu.umn.cs.spatialHadoop.core.CellInfo;
-import edu.umn.cs.spatialHadoop.core.Rectangle;
-import edu.umn.cs.spatialHadoop.io.TextSerializerHelper;
 
 public class Partition extends CellInfo {
   /**Name of the file that contains the data*/
@@ -28,6 +28,8 @@ public class Partition extends CellInfo {
   
   /**Total size of data in this partition in bytes (uncompressed)*/
   public long size;
+
+  public PivotInfo pivot;
   
   public Partition() {}
   
@@ -40,6 +42,8 @@ public class Partition extends CellInfo {
     this.filename = other.filename;
     this.recordCount = other.recordCount;
     this.size = other.size;
+    if(other.pivot != null)
+      this.pivot = other.pivot.clone();
     super.set((CellInfo)other);
   }
 
@@ -67,6 +71,10 @@ public class Partition extends CellInfo {
     TextSerializerHelper.serializeLong(size, text, ',');
     byte[] temp = (filename == null? "" : filename).getBytes();
     text.append(temp, 0, temp.length);
+    if(pivot!=null){
+      text.append(new byte[] {','}, 0, 1);
+      pivot.toText(text);
+    }
     return text;
   }
   
@@ -76,7 +84,27 @@ public class Partition extends CellInfo {
     text.set(text.getBytes(), 1, text.getLength() - 1); // Skip comma
     this.recordCount = TextSerializerHelper.consumeLong(text, ',');
     this.size = TextSerializerHelper.consumeLong(text, ',');
-    filename = text.toString();
+    filename = TextSerializerHelper.consumeString(text, ',');
+    if(text.getLength()>0){
+      pivot = new PivotInfo();
+      pivot.fromText(text);
+      if(text.getLength()>0)
+        TextSerializerHelper.consumeString(text, ',');
+    }
+  }
+
+  public void fromQuadtreeText(Text text) {
+    super.fromText(text);
+    text.set(text.getBytes(), 1, text.getLength() - 1); // Skip comma
+    this.recordCount = TextSerializerHelper.consumeLong(text, ',');
+    this.size = TextSerializerHelper.consumeLong(text, ',');
+    filename = TextSerializerHelper.consumeString(text, ',');
+    /*if(text.getLength()>0){
+      pivot = new PivotInfo();
+      pivot.fromText(text);
+      if(text.getLength()>0)
+        TextSerializerHelper.consumeString(text, ',');
+    }*/
   }
   
   @Override
@@ -111,6 +139,13 @@ public class Partition extends CellInfo {
     int s_x2 = (int) Math.round((this.x2 - fileMBR.x1) * imageWidth / fileMBR.getWidth());
     int s_y2 = (int) Math.round((this.y2 - fileMBR.y1) * imageHeight / fileMBR.getHeight());
     g.drawRect(s_x1, s_y1, s_x2 - s_x1 + 1, s_y2 - s_y1 + 1);
+    if(pivot!=null){
+      int c_x = (int) Math.round((this.pivot.x - fileMBR.x1) * imageWidth / fileMBR.getWidth());
+      int c_y = (int) Math.round((this.pivot.y - fileMBR.y1) * imageHeight / fileMBR.getHeight());
+      int radius = (int) Math.round((this.pivot.maxDis) * imageHeight / fileMBR.getHeight());
+      int radius2 = (int) Math.round((this.pivot.maxDis) * imageWidth / fileMBR.getWidth());
+      //g.drawOval(c_x,c_y, radius, radius2);
+    }
   }
   
   @Override
@@ -120,6 +155,14 @@ public class Partition extends CellInfo {
     int imgx2 = (int) Math.round(this.x2 * xscale);
     int imgy2 = (int) Math.round(this.y2 * yscale);
     g.drawRect(imgx1, imgy1, imgx2 - imgx1 + 1, imgy2 - imgy1 + 1);
+    if(pivot!=null){
+      int radius = (int) Math.round(this.pivot.maxDis * xscale);
+      int radius2 = (int) Math.round(this.pivot.maxDis * yscale);
+      int c_x = (int) Math.round(this.pivot.x * xscale) - radius;
+      int c_y = (int) Math.round(this.pivot.y * yscale) - radius2;
+      //g.drawLine(c_x,c_y, c_x, c_y);
+      //g.drawOval(c_x,c_y, radius*2, radius2*2);
+    }
   }
   
   @Override
