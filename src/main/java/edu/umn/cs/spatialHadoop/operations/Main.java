@@ -144,6 +144,18 @@ public class Main {
 
       pgd.addClass("knnj2", KNNJ2.class,
           "Computes the knn join of two input set of points");
+
+      pgd.addClass("knnjvoronoi", KNNJVoronoi.class,
+          "Computes the knn join of two input set of points");
+      pgd.addClass("knnjivoronoi", KNNJImprovedVoronoi.class,
+          "Computes the knn join of two input set of points");
+
+      pgd.addClass("knnjrvoronoi", KNNJRVoronoi.class,
+          "Computes the knn join of two input set of points");
+
+      pgd.addClass("knnjovoronoi", KNNJOVoronoi.class,
+          "Computes the knn join of two input set of points");
+
       pgd.addClass("edrj", EDRJ.class,
           "Computes the knn join of two input set of points");
 
