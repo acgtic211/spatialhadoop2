@@ -16,13 +16,14 @@ import java.awt.*;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.io.Serializable;
 
 /**
  * A class that holds coordinates of a point.
  * @author aseldawy
  *
  */
-public class Point implements Shape, WritableComparable<Point> {
+public class Point implements Shape, WritableComparable<Point>, Serializable {
 	public double x;
 	public double y;
 
