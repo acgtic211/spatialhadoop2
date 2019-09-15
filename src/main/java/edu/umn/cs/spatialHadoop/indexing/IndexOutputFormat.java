@@ -8,19 +8,9 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.indexing;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
-import java.lang.Thread.State;
-import java.lang.Thread.UncaughtExceptionHandler;
-import java.util.Map;
-import java.util.Vector;
-import java.util.concurrent.ConcurrentHashMap;
-
+import edu.umn.cs.spatialHadoop.core.PivotInfo;
+import edu.umn.cs.spatialHadoop.core.Shape;
+import edu.umn.cs.spatialHadoop.io.Text2;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -39,8 +29,12 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.LineReader;
 import org.apache.hadoop.util.Progressable;
 
-import edu.umn.cs.spatialHadoop.core.Shape;
-import edu.umn.cs.spatialHadoop.io.Text2;
+import java.io.*;
+import java.lang.Thread.State;
+import java.lang.Thread.UncaughtExceptionHandler;
+import java.util.Map;
+import java.util.Vector;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author Ahmed Eldawy
@@ -169,6 +163,22 @@ public class IndexOutputFormat<S extends Shape>
         output.write(bytes, 0, tempText.getLength());
         output.write(NEW_LINE);
         Partition partition = partitionsInfo.get(id);
+
+        if(partitioner instanceof VoronoiPartitioner) {
+          if(partition.pivot == null) {
+            VoronoiPartitioner we = (VoronoiPartitioner) partitioner;
+            PivotInfo pivot = we.getPivotInfo()[id];
+            partition.pivot = new PivotInfo(pivot);
+          }
+          double distance = partition.pivot.distanceTo(value.getMBR().getCenterPoint());
+          if(partition.pivot.maxDis<distance){
+            partition.pivot.maxDis = distance;
+          }
+          if(partition.pivot.minDis>distance){
+            partition.pivot.minDis = distance;
+          }
+        }
+
         partition.recordCount++;
         partition.size += tempText.getLength() + NEW_LINE.length;
         partition.expand(value);
@@ -212,6 +222,15 @@ public class IndexOutputFormat<S extends Shape>
               // partition to keep partitions disjoint
               partitionInfo.set(partitionInfo.getIntersection(partitioner.getPartition(id)));
             }
+
+            if(partitioner instanceof VoronoiPartitioner) {
+              if(partitionInfo.pivot==null) {
+                VoronoiPartitioner we = (VoronoiPartitioner) partitioner;
+                PivotInfo pivot = we.getPivotInfo()[id];
+                partitionInfo.pivot = pivot;
+              }
+            }
+
             Text partitionText = partitionInfo.toText(new Text());
             synchronized (masterFile) {
               // Write partition information to the master file

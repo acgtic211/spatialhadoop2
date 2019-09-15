@@ -8,16 +8,19 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.indexing;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Vector;
-import java.util.ArrayList;
-
+import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.core.*;
+import edu.umn.cs.spatialHadoop.indexing.IndexOutputFormat.IndexRecordWriter;
+import edu.umn.cs.spatialHadoop.io.Text2;
+import edu.umn.cs.spatialHadoop.mapreduce.RTreeRecordReader3;
+import edu.umn.cs.spatialHadoop.mapreduce.SpatialInputFormat3;
+import edu.umn.cs.spatialHadoop.mapreduce.SpatialRecordReader3;
+import edu.umn.cs.spatialHadoop.nasa.HDFRecordReader;
+import edu.umn.cs.spatialHadoop.operations.DENDISSampler;
+import edu.umn.cs.spatialHadoop.operations.FileMBR;
+import edu.umn.cs.spatialHadoop.operations.KMPPSampler;
+import edu.umn.cs.spatialHadoop.operations.Sampler;
+import edu.umn.cs.spatialHadoop.util.FileUtil;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -30,36 +33,23 @@ import org.apache.hadoop.mapred.ClusterStatus;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.LocalJobRunner;
-import org.apache.hadoop.mapreduce.InputSplit;
-import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.RecordReader;
-import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.*;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.util.GenericOptionsParser;
 import org.apache.hadoop.util.LineReader;
 
-import edu.umn.cs.spatialHadoop.OperationsParams;
-import edu.umn.cs.spatialHadoop.core.Point;
-import edu.umn.cs.spatialHadoop.core.Rectangle;
-import edu.umn.cs.spatialHadoop.core.ResultCollector;
-import edu.umn.cs.spatialHadoop.core.Shape;
-import edu.umn.cs.spatialHadoop.core.SpatialSite;
-import edu.umn.cs.spatialHadoop.indexing.IndexOutputFormat.IndexRecordWriter;
-import edu.umn.cs.spatialHadoop.io.Text2;
-import edu.umn.cs.spatialHadoop.mapreduce.RTreeRecordReader3;
-import edu.umn.cs.spatialHadoop.mapreduce.SpatialInputFormat3;
-import edu.umn.cs.spatialHadoop.mapreduce.SpatialRecordReader3;
-import edu.umn.cs.spatialHadoop.nasa.HDFRecordReader;
-import edu.umn.cs.spatialHadoop.operations.FileMBR;
-import edu.umn.cs.spatialHadoop.operations.Sampler;
-import edu.umn.cs.spatialHadoop.util.FileUtil;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @author Ahmed Eldawy
  *
  */
-public class Indexer {
+public class  Indexer {
   private static final Log LOG = LogFactory.getLog(Indexer.class);
   
   private static final Map<String, Class<? extends Partitioner>> PartitionerClasses;
@@ -77,7 +67,13 @@ public class Indexer {
     PartitionerClasses.put("zcurve", ZCurvePartitioner.class);
     PartitionerClasses.put("hilbert", HilbertCurvePartitioner.class);
     PartitionerClasses.put("kdtree", KdTreePartitioner.class);
-    
+    PartitionerClasses.put("voronoi", VoronoiKMeansPartitioner.class);
+    PartitionerClasses.put("rvoronoi", VoronoiRandomPartitioner.class);
+    PartitionerClasses.put("dcvoronoi", VoronoiDCKMeansPartitioner.class);
+    PartitionerClasses.put("dpvoronoi", VoronoiDPKMeansPartitioner.class);
+    PartitionerClasses.put("mvoronoi", VoronoiKMedoidsPartitioner.class);
+    PartitionerClasses.put("ovoronoi", VoronoiOpticsPartitioner.class);
+
     PartitionerReplicate = new HashMap<String, Boolean>();
     PartitionerReplicate.put("grid", true);
     PartitionerReplicate.put("str", false);
@@ -88,7 +84,13 @@ public class Indexer {
     PartitionerReplicate.put("zcurve", false);
     PartitionerReplicate.put("hilbert", false);
     PartitionerReplicate.put("kdtree", true);
-    
+    PartitionerReplicate.put("voronoi", false);
+    PartitionerReplicate.put("rvoronoi", false);
+    PartitionerReplicate.put("dcvoronoi", false);
+    PartitionerReplicate.put("dpvoronoi", false);
+    PartitionerReplicate.put("mvoronoi", false);
+    PartitionerReplicate.put("ovoronoi", false);
+
     LocalIndexes = new HashMap<String, Class<? extends LocalIndexer>>();
     LocalIndexes.put("rtree", RTreeLocalIndexer.class);
     LocalIndexes.put("r+tree", RTreeLocalIndexer.class);
@@ -275,6 +277,9 @@ public class Indexer {
       for (Path in : ins) {
         inSize += FileUtil.getPathSize(in.getFileSystem(job), in);
       }
+
+      int divide = job.getInt("divide",1);
+
       long estimatedOutSize = (long) (inSize * (1.0 + job.getFloat(SpatialSite.INDEXING_OVERHEAD, 0.1f)));
       FileSystem outFS = out.getFileSystem(job);
       long outBlockSize = outFS.getDefaultBlockSize(out);
@@ -299,13 +304,22 @@ public class Indexer {
       if (job.get("local") != null)
       params2.set("local", job.get("local"));
       params2.setClass("outshape", Point.class, Shape.class);
-      Sampler.sample(ins, resultCollector, params2);
+      String sampler = job.get("sampler","default");
+      if(sampler.equals("default")) {
+        Sampler.sample(ins, resultCollector, params2);
+      } else if(sampler.equals("dendis")){
+        DENDISSampler.sample(ins,resultCollector,params2);
+      } else if(sampler.equals("kmpp")){
+        KMPPSampler.sample(ins,resultCollector,params2);
+      }
       long t2 = System.currentTimeMillis();
       System.out.println("Total time for sampling in millis: "+(t2-t1));
       LOG.info("Finished reading a sample of "+sample.size()+" records");
-      
-      int partitionCapacity = (int) Math.max(1, Math.floor((double)sample.size() * outBlockSize / estimatedOutSize));
-      int numPartitions = Math.max(1, (int) Math.ceil((float)estimatedOutSize / outBlockSize));
+
+      LOG.info("estimatedOutSize "+estimatedOutSize+" : outBlockSize "+outBlockSize);
+
+      int partitionCapacity = (int) Math.max(1, Math.floor(((double)sample.size() * outBlockSize / estimatedOutSize)/divide));
+      int numPartitions = Math.max(1, (int) Math.ceil((float)estimatedOutSize / outBlockSize)) * divide;
       LOG.info("Partitioning the space into "+numPartitions+" partitions with capacity of "+partitionCapacity);
 
       partitioner.createFromPoints(inMBR, sample.toArray(new Point[sample.size()]), partitionCapacity);

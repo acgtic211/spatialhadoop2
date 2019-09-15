@@ -8,10 +8,12 @@
 *************************************************************************/
 package edu.umn.cs.spatialHadoop.mapreduce;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Iterator;
-
+import edu.umn.cs.spatialHadoop.OperationsParams;
+import edu.umn.cs.spatialHadoop.core.Rectangle;
+import edu.umn.cs.spatialHadoop.core.Shape;
+import edu.umn.cs.spatialHadoop.core.SpatialSite;
+import edu.umn.cs.spatialHadoop.indexing.GlobalIndex;
+import edu.umn.cs.spatialHadoop.indexing.Partition;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -20,28 +22,15 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.Seekable;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.compress.CodecPool;
-import org.apache.hadoop.io.compress.CompressionCodec;
-import org.apache.hadoop.io.compress.CompressionCodecFactory;
-import org.apache.hadoop.io.compress.CompressionInputStream;
-import org.apache.hadoop.io.compress.Decompressor;
-import org.apache.hadoop.io.compress.SplitCompressionInputStream;
-import org.apache.hadoop.io.compress.SplittableCompressionCodec;
+import org.apache.hadoop.io.compress.*;
 import org.apache.hadoop.mapred.Task;
-import org.apache.hadoop.mapreduce.Counter;
-import org.apache.hadoop.mapreduce.InputSplit;
-import org.apache.hadoop.mapreduce.MapContext;
-import org.apache.hadoop.mapreduce.RecordReader;
-import org.apache.hadoop.mapreduce.TaskAttemptContext;
+import org.apache.hadoop.mapreduce.*;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.util.LineReader;
 
-import edu.umn.cs.spatialHadoop.OperationsParams;
-import edu.umn.cs.spatialHadoop.core.Rectangle;
-import edu.umn.cs.spatialHadoop.core.Shape;
-import edu.umn.cs.spatialHadoop.core.SpatialSite;
-import edu.umn.cs.spatialHadoop.indexing.GlobalIndex;
-import edu.umn.cs.spatialHadoop.indexing.Partition;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Iterator;
 
 /**
  * @author Ahmed Eldawy
@@ -191,6 +180,13 @@ public class SpatialRecordReader3<V extends Shape> extends
         if (p.filename.equals(this.path.getName()))
           cellMBR = p;
       }
+
+      if(cellMBR==null){
+        cellMBR = new Partition();
+        cellMBR.filename = path.getName();
+        cellMBR.invalidate();
+      }
+
     }
     
     this.value = new ShapeIterator<V>();
